@@ -69,7 +69,8 @@ public:
 
     std::string GetCurrentMovesetName(const std::string& categoryName, int stanceIndex, int movesetIndex,
                                       int directionalState);
-    bool _showRestartPopup = false; 
+    bool _showRestartPopup = false;
+    bool gameisloaded = false;
     void ScanDarAnimations();
     void LoadGameDataForNpcRules();
     void PopulateNpcList();
@@ -78,8 +79,12 @@ public:
     std::vector<int> GetAvailableMovesetIndices(RE::Actor* actor, const std::string& categoryName);
 
     std::optional<std::pair<size_t, size_t>> FindSubAnimationByPath(const std::filesystem::path& configPath);
+
+    void AddFullCategoryConditions(rapidjson::Value& parentArray, const WeaponCategory& category,
+                                   rapidjson::Document::AllocatorType& allocator);
     
     MovesetTags GetCurrentMovesetTags(const std::string& categoryName, int stanceIndex, int movesetIndex);
+    void SaveAllSettings();
 
 private:
     
@@ -99,8 +104,9 @@ private:
     char _newMovesetNameBuffer[128] = "";
 
     void ProcessTopLevelMod(const std::filesystem::path& modPath);
+    void GenerateFallbackFolders();
     void DrawAddModModal();
-    void SaveAllSettings();
+    
     void UpdateOrCreateJson(const std::filesystem::path& jsonPath, const std::vector<FileSaveConfig>& configs);
     void AddCompareValuesCondition(rapidjson::Value& conditionsArray, const std::string& graphVarName, int value,
                                    rapidjson::Document::AllocatorType& allocator);

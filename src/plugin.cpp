@@ -119,8 +119,8 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
     SetupLog();
     logger::info("Plugin loaded");
     AnimationManager::GetSingleton()->ScanAnimationMods();
+    AnimationManager::GetSingleton()->SaveAllSettings();
     SKSE::Init(skse);
-    
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
     
     // Registra seu ouvinte de eventos de Ação (sacar/guardar arma)
@@ -132,7 +132,5 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
 
     UI::RegisterMenu();
     
-
-
     return true;
 }

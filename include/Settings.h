@@ -91,6 +91,7 @@ struct WeaponCategory {
 
     bool isCustom = false;
     std::string baseCategoryName;
+    bool ownerIsPlayer;
 };
 
 struct UserMoveset {

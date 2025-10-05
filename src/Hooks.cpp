@@ -28,7 +28,7 @@
 
     void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         SKSE::log::info("Processando CycleDar.json em: {}", cycleDarJsonPath.string());
-
+        try {
         // 1. Abre e lê o arquivo JSON
         std::ifstream fileStream(cycleDarJsonPath);
         if (!fileStream) {
@@ -169,11 +169,16 @@
         outFile.close();
 
         SKSE::log::info("Arquivo JSON {} atualizado com sucesso.", cycleDarJsonPath.string());
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::critical("Erro de filesystem em ProcessCycleDarFile para o arquivo '{}': {}",
+                                cycleDarJsonPath.string(), e.what());
+        }
     }
 
     // --- DESAFIO 1: Nova função para escanear a pasta do sub-moveset em busca de tags ---
     void ScanSubAnimationFolderForTags(const std::filesystem::path& subAnimPath,
                                                          SubAnimationDef& subAnimDef) {
+        try {
         if (!std::filesystem::exists(subAnimPath) || !std::filesystem::is_directory(subAnimPath)) {
             return;
         }
@@ -240,13 +245,18 @@
 
 
          logger::info("Scan da pasta '{}': hasDPA (A:{}, B:{}, L:{}, R:{}), hasCPA:{}", subAnimDef.name,
-                        subAnimDef.dpaTags.hasA, subAnimDef.dpaTags.hasB, subAnimDef.dpaTags.hasL,
-                        subAnimDef.dpaTags.hasR, subAnimDef.hasCPA);
+                        subAnimDef.dpaTags.hasA, subAnimDef.dpaTags.hasB, subAnimDef.dpaTags.hasL, subAnimDef.dpaTags.hasR,
+                     subAnimDef.hasCPA);
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::critical("Erro de filesystem em ScanSubAnimationFolderForTags na pasta '{}': {}",
+                                subAnimPath.string(), e.what());
+        }
     }
 
     // --- Lógica de Escaneamento (Carrega a Biblioteca) ---
     void AnimationManager::ScanAnimationMods() {
         SKSE::log::info("Iniciando escaneamento da biblioteca de animações...");
+        try {
         _categories.clear();
         _allMods.clear();
 
@@ -373,9 +383,18 @@
         LoadCycleMovesets();
         
         SKSE::log::info("Categorias de armas para NPCs inicializadas.");
+        } catch (const std::exception& e) {  // <--- E ADICIONAR AQUI
+            SKSE::log::critical("Um erro fatal ocorreu durante ScanAnimationMods: {}", e.what());
+            RE::DebugNotification("Erro crítico ao escanear animações! Verifique os logs.");
+        } catch (...) {
+            SKSE::log::critical("Um erro fatal e desconhecido ocorreu durante ScanAnimationMods.");
+            RE::DebugNotification("Erro crítico e desconhecido ao escanear animações!");
+        }
     }
+    
 
     void AnimationManager::ProcessTopLevelMod(const std::filesystem::path& modPath) {
+        try {
         std::filesystem::path configPath = modPath / "config.json";
         if (!std::filesystem::exists(configPath)) return;
         std::ifstream fileStream(configPath);
@@ -383,6 +402,10 @@
         fileStream.close();
         rapidjson::Document doc;
         doc.Parse(jsonContent.c_str());
+        if (doc.IsObject() && doc.HasMember("isCycleMovesetFallback") && doc["isCycleMovesetFallback"].GetBool()) {
+            SKSE::log::info("Ignorando pasta de fallback gerenciada: {}", modPath.string());
+            return;
+        }
         if (doc.IsObject() && doc.HasMember("name") && doc.HasMember("author")) {
             AnimationModDef modDef;
             modDef.name = doc["name"].GetString();
@@ -399,8 +422,145 @@
             }
             _allMods.push_back(modDef);
         }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::critical("Erro de filesystem em ProcessTopLevelMod ao escanear '{}': {}", modPath.string(),
+                                e.what());
+            RE::DebugNotification(
+                std::format("ERROR scanning mod folder: {}. Check logs.", modPath.filename().string()).c_str());
+        }
     }
+    void AnimationManager::GenerateFallbackFolders() {
+        SKSE::log::info("Iniciando geração/atualização das pastas de fallback...");
 
+        // Caminho base para as nossas pastas de fallback.
+        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
+        const std::filesystem::path fallbackRootPath = oarRootPath / "_CycleMoveset_Fallbacks";
+
+        try {
+            // Garante que a pasta base "_CycleMoveset_Fallbacks" exista
+            if (!std::filesystem::exists(fallbackRootPath)) {
+                std::filesystem::create_directories(fallbackRootPath);
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::error("Falha ao criar o diretório raiz de fallback: {}. Erro: {}", fallbackRootPath.string(),
+                             e.what());
+            return;
+        }
+
+        {
+            std::filesystem::path rootConfigPath = fallbackRootPath / "config.json";
+            rapidjson::Document doc;
+            doc.SetObject();
+            auto& allocator = doc.GetAllocator();
+
+            // Adiciona informações básicas para que o OAR reconheça a pasta
+            doc.AddMember("name", "[CycleMoveset] Fallback Animations", allocator);
+            doc.AddMember("author", "Cycle Moveset Manager", allocator);
+            doc.AddMember("description", "Pasta auto-gerada para conter animações de fallback. Não edite manualmente.",
+                          allocator);
+
+            // Adiciona nosso identificador para que ScanAnimationMods ignore esta pasta
+            doc.AddMember("isCycleMovesetFallback", true, allocator);
+
+            // Salva o arquivo
+            std::ofstream ofs(rootConfigPath);
+            if (ofs) {
+                rapidjson::StringBuffer buffer;
+                rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                doc.Accept(writer);
+                ofs << buffer.GetString();
+                ofs.close();
+            } else {
+                SKSE::log::error("Falha ao criar o config.json raiz para a pasta de fallback!");
+            }
+        }
+
+        // Processa tanto as categorias do jogador quanto as de todas as regras de NPC
+        for (const auto& categoryPair : _categories) {
+            const WeaponCategory& category = categoryPair.second;
+
+            // O jogador SEMPRE tem 4 stances (índices 0 a 3)
+            for (int i = 0; i < 4; ++i) {
+                const CategoryInstance& instance = category.instances[i];
+                // Se não houver nenhum moveset configurado para esta stance, não há necessidade de criar uma pasta de
+                // fallback para ela.
+                if (instance.modInstances.empty()) {
+                    continue;
+                }
+
+                std::string fallbackFolderName = std::format("Fallback_{}_{}", category.name, i);
+                std::filesystem::path fallbackStancePath = fallbackRootPath / fallbackFolderName;
+
+                std::filesystem::create_directory(fallbackStancePath);
+
+                std::set<std::string> copiedFiles;
+                int filesCopiedCount = 0;
+
+                for (const auto& modInst : instance.modInstances) {
+                    if (!modInst.isSelected) continue;
+                    for (const auto& subInst : modInst.subAnimationInstances) {
+                        if (!subInst.isSelected) continue;
+
+                        const auto& sourceSubAnim =
+                            _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
+                        std::filesystem::path sourceDirectory = sourceSubAnim.path.parent_path();
+
+                        if (std::filesystem::exists(sourceDirectory) &&
+                            std::filesystem::is_directory(sourceDirectory)) {
+                            for (const auto& fileEntry : std::filesystem::directory_iterator(sourceDirectory)) {
+                                if (fileEntry.is_regular_file() && fileEntry.path().extension() == ".hkx") {
+                                    std::string filename = fileEntry.path().filename().string();
+                                    if (copiedFiles.find(filename) == copiedFiles.end()) {
+                                        CopySingleFile(fileEntry.path(), fallbackStancePath, filesCopiedCount);
+                                        copiedFiles.insert(filename);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (filesCopiedCount > 0) {
+                    rapidjson::Document doc;
+                    doc.SetObject();
+                    auto& allocator = doc.GetAllocator();
+
+                    doc.AddMember("name", rapidjson::Value(fallbackFolderName.c_str(), allocator), allocator);
+                    doc.AddMember("priority", 2090000000, allocator);
+                    doc.AddMember("isCycleMovesetFallback", true, allocator);
+
+                    rapidjson::Value conditions(rapidjson::kArrayType);
+                    rapidjson::Value masterAndBlock(rapidjson::kObjectType);
+                    masterAndBlock.AddMember("condition", "AND", allocator);
+                    rapidjson::Value andConditions(rapidjson::kArrayType);
+
+                    // Condições específicas para esta pasta de fallback
+                    AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false,
+                                            allocator);  // Apenas para o JOGADOR
+                    AddCompareValuesCondition(andConditions, "cycle_instance", i + 1,
+                                              allocator);  // Apenas para esta STANCE
+                    AddFullCategoryConditions(andConditions, category,
+                                              allocator);  // E apenas para esta CATEGORIA DE ARMA
+                    // Note que NÃO há condição para "testarone"
+
+                    masterAndBlock.AddMember("Conditions", andConditions, allocator);
+                    conditions.PushBack(masterAndBlock, allocator);
+                    doc.AddMember("conditions", conditions, allocator);
+
+                    std::ofstream ofs(fallbackStancePath / "config.json");
+                    rapidjson::StringBuffer buffer;
+                    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                    doc.Accept(writer);
+                    ofs << buffer.GetString();
+                } else {
+                    // Se nenhum arquivo foi copiado (ex: movesets sem animações), remove a pasta vazia.
+                    std::filesystem::remove(fallbackStancePath);
+                }
+            }
+        }
+
+        SKSE::log::info("Geração de pastas de fallback do jogador concluída.");
+    }
     // --- Lógica da Interface de Usuário ---
     void AnimationManager::DrawAddModModal() {
         if (_isAddModModalOpen) {
@@ -1582,6 +1742,7 @@ void AnimationManager::SaveAllSettings() {
         SaveCustomCategories();
         SaveStanceNames();
         SaveCycleMovesets();  // Esta já foi corrigida e está funcionando.
+        GenerateFallbackFolders();
         SKSE::log::info("Gerando arquivos de condição para OAR...");
         std::map<std::filesystem::path, std::vector<FileSaveConfig>> fileUpdates;
 
@@ -1738,7 +1899,11 @@ void AnimationManager::SaveAllSettings() {
         SKSE::log::info("Salvamento global concluído.");
         RE::DebugNotification("Todas as configurações foram salvas!");
         UpdateMaxMovesetCache();
-        _showRestartPopup = true;
+        if (gameisloaded) {
+            _showRestartPopup = true;
+        }
+        gameisloaded = true;
+
 }
 
 
@@ -1763,8 +1928,6 @@ void AnimationManager::SaveAllSettings() {
         std::string movesetName = jsonPath.parent_path().filename().string();
         if (doc.HasMember("name")) {
             doc["name"].SetString(movesetName.c_str(), allocator);
-        } else {
-            doc.AddMember("name", rapidjson::Value(movesetName.c_str(), allocator), allocator);
         }
 
         int basePriority = 2100000000;
@@ -1862,54 +2025,11 @@ void AnimationManager::SaveAllSettings() {
 
                 // NPC Type condition
                 int priorityValue = GetPriorityForType(config.ruleType);
+                
                 AddCompareValuesCondition(andConditions, "CycleMovesetNpcType", priorityValue, allocator);
 
                 // Right-Hand Equipped Type condition
-                {
-                    if (config.category->equippedTypeValue < 0.0) {  // Categoria genérica como "Shield"
-                        rapidjson::Value rightHandAndBlock(rapidjson::kObjectType);
-                        rightHandAndBlock.AddMember("condition", "AND", allocator);
-                        rapidjson::Value conditionsForRightHand(rapidjson::kArrayType);
-
-                        rapidjson::Value orBlock(rapidjson::kObjectType);
-                        orBlock.AddMember("condition", "OR", allocator);
-                        rapidjson::Value orConditions(rapidjson::kArrayType);
-                        AddCompareEquippedTypeCondition(orConditions, 1.0, false, allocator);
-                        AddCompareEquippedTypeCondition(orConditions, 2.0, false, allocator);
-                        AddCompareEquippedTypeCondition(orConditions, 3.0, false, allocator);
-                        AddCompareEquippedTypeCondition(orConditions, 4.0, false, allocator);
-                        orBlock.AddMember("Conditions", orConditions, allocator);
-                        conditionsForRightHand.PushBack(orBlock, allocator);
-
-                        // CORREÇÃO #2: A lógica de exclusão para a categoria Shield base agora é chamada corretamente.
-                        AddShieldCategoryExclusions(conditionsForRightHand, allocator);
-
-                        rightHandAndBlock.AddMember("Conditions", conditionsForRightHand, allocator);
-                        andConditions.PushBack(rightHandAndBlock, allocator);
-                    } else {  // Caso padrão
-                        AddCompareEquippedTypeCondition(andConditions, config.category->equippedTypeValue, false,
-                                                        allocator);
-                    }
-                }
-
-                // Right-Hand Keyword conditions
-                AddKeywordOrConditions(andConditions, config.category->keywords, false, allocator);
-                AddCompetingKeywordExclusions(andConditions, config.category, false, allocator);
-
-                // Left-Hand Keyword conditions
-                if (!config.category->leftHandKeywords.empty()) {
-                    AddKeywordOrConditions(andConditions, config.category->leftHandKeywords, true, allocator);
-                    AddCompetingKeywordExclusions(andConditions, config.category, true, allocator);
-                }
-
-                // Left-Hand Equipped Type condition
-                if (config.category->leftHandEquippedTypeValue >= 0.0) {
-                    AddCompareEquippedTypeCondition(andConditions, config.category->leftHandEquippedTypeValue, true,
-                                                    allocator);
-
-                    // CORREÇÃO #2: Bloco que causava duplicação de keywords foi removido daqui.
-                    // A verificação de keywords da mão esquerda já é feita acima.
-                }
+                AddFullCategoryConditions(andConditions, *config.category, allocator);
 
                 // ADIÇÃO: Correção de segurança para a instância do jogador
                 int final_instance_index = config.instance_index;
@@ -2540,8 +2660,8 @@ void AnimationManager::SaveCycleMovesets() {
 
 
 void AnimationManager::LoadCycleMovesets() {
-        SKSE::log::info("Iniciando carregamento de regras dos arquivos (User_)CycleMoveset.json...");
-
+    SKSE::log::info("Iniciando carregamento de regras dos arquivos (User_)CycleMoveset.json...");
+    try {
         // Limpa o estado atual para garantir um carregamento limpo
         for (auto& pair : _categories) {
             for (auto& instance : pair.second.instances) instance.modInstances.clear();
@@ -2552,26 +2672,10 @@ void AnimationManager::LoadCycleMovesets() {
         }
         _npcRules.clear();
 
-        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
-        if (!std::filesystem::exists(oarRootPath)) {
-            SKSE::log::warn("Diretório do OAR não encontrado. Carregamento de regras abortado.");
-            return;
-        }
-        const std::filesystem::path darRootPath =
-            "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
-       
-        std::set<std::filesystem::path> processedFolders;
+        
 
-        auto processJsonFile = [&](const std::filesystem::path& jsonPath) {
-            std::ifstream ifs(jsonPath);
-            if (!ifs.is_open()) return;
-            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
-            ifs.close();
-            rapidjson::Document doc;
-            doc.Parse(jsonContent.c_str());
-
-            if (doc.HasParseError() || !doc.IsArray()) {
-                SKSE::log::warn("Arquivo mal formatado ou não é um array, pulando: {}", jsonPath.string());
+        auto processJsonDocument = [&](rapidjson::Document& doc) {
+            if (!doc.IsArray()) {
                 return;
             }
 
@@ -2595,7 +2699,6 @@ void AnimationManager::LoadCycleMovesets() {
                     _generalNpcRule.type = RuleType::GeneralNPC;
                     _generalNpcRule.formID = 0xFFFFFFFF;  // ID Sentinela
                 } else {
-                    // LÓGICA DE BUSCA CORRIGIDA
                     auto rule_it = std::find_if(_npcRules.begin(), _npcRules.end(), [&](const MovesetRule& r) {
                         return std::format("{:08X}", r.formID) == formIdStr;
                     });
@@ -2606,15 +2709,14 @@ void AnimationManager::LoadCycleMovesets() {
                         newRule.displayName = profile["Name"].GetString();
                         newRule.identifier = profile["Identifier"].GetString();
                         newRule.pluginName = profile["Plugin"].GetString();
-
                         try {
                             newRule.formID = std::stoul(formIdStr, nullptr, 16);
                         } catch (const std::exception&) {
                             continue;
                         }
-
-                        newRule.categories = _categories;  // Começa com uma cópia limpa
+                        newRule.categories = _categories;
                         for (auto& pair : newRule.categories) {
+                            pair.second.ownerIsPlayer = false;
                             for (auto& instance : pair.second.instances) instance.modInstances.clear();
                         }
                         _npcRules.push_back(newRule);
@@ -2626,7 +2728,6 @@ void AnimationManager::LoadCycleMovesets() {
 
                 if (!targetCategories) continue;
 
-                // Lógica para popular as categorias, stances e animações
                 for (const auto& categoryJson : menu.GetArray()) {
                     if (!categoryJson.IsObject() || !categoryJson.HasMember("Category") ||
                         !categoryJson.HasMember("stances"))
@@ -2648,7 +2749,6 @@ void AnimationManager::LoadCycleMovesets() {
                         auto modIdxOpt = FindModIndexByName(movesetName);
                         if (!modIdxOpt) continue;
 
-                        // --- LÓGICA DE AGRUPAMENTO RESTAURADA ---
                         ModInstance* modInstancePtr = nullptr;
                         int hp = stanceJson.HasMember("hp") ? stanceJson["hp"].GetInt() : 100;
                         int st = stanceJson.HasMember("st") ? stanceJson["st"].GetInt() : 100;
@@ -2657,7 +2757,6 @@ void AnimationManager::LoadCycleMovesets() {
                         int order = stanceJson.HasMember("order") ? stanceJson["order"].GetInt() : 0;
 
                         for (auto& mi : targetInstance.modInstances) {
-                            // Agora verifica o nome E todas as condições
                             if (mi.sourceModIndex == *modIdxOpt && mi.hp == hp && mi.st == st && mi.mn == mn &&
                                 mi.level == level) {
                                 modInstancePtr = &mi;
@@ -2670,47 +2769,33 @@ void AnimationManager::LoadCycleMovesets() {
                             modInstancePtr = &targetInstance.modInstances.back();
                             modInstancePtr->sourceModIndex = *modIdxOpt;
                             modInstancePtr->isSelected = true;
-
-                            // Aplica as condições ao criar o novo moveset
                             modInstancePtr->hp = hp;
                             modInstancePtr->st = st;
                             modInstancePtr->mn = mn;
                             modInstancePtr->level = level;
-                            modInstancePtr->order = order;  // Usa o 'order' lido do JSON
+                            modInstancePtr->order = order;
                         }
-                        // --- FIM DA LÓGICA DE AGRUPAMENTO ---
 
                         for (const auto& animJson : stanceJson["animations"].GetArray()) {
-                            // Validação de campos essenciais. Agora, sourceConfigPath é o mais importante.
                             if (!animJson.IsObject() || !animJson.HasMember("sourceConfigPath") ||
                                 !animJson.HasMember("index"))
                                 continue;
 
-                            // --- LÓGICA DE BUSCA MELHORADA ---
-
                             std::string configPathStr = animJson["sourceConfigPath"].GetString();
-                            if (configPathStr.empty()) {
-                                SKSE::log::warn("Encontrada entrada de animação com sourceConfigPath vazio. Pulando.");
+                            if (configPathStr.empty()) continue;
+
+                            auto indicesOpt = FindSubAnimationByPath(configPathStr);
+                            if (!indicesOpt) {
+                                SKSE::log::warn(
+                                    "Não foi possível encontrar a animação para o config/path: {}. Pode ter sido "
+                                    "removida. Pulando.",
+                                    configPathStr);
                                 continue;
                             }
 
-                            // Busca a animação usando o caminho como ID único
-                            auto indicesOpt = FindSubAnimationByPath(configPathStr);
-
-                            if (!indicesOpt) {
-                                indicesOpt = FindSubAnimationByPath(configPathStr);
-                                if (!indicesOpt) {
-                                    SKSE::log::warn(
-                                        "Não foi possível encontrar a animação para o config/path: {}. Pode ter sido "
-                                        "removida. Pulando.",
-                                        configPathStr);
-                                    continue;
-                                }
-                            }
-
                             SubAnimationInstance newSubInstance;
-                            newSubInstance.sourceModIndex = indicesOpt->first;       // Índice do Mod
-                            newSubInstance.sourceSubAnimIndex = indicesOpt->second;  // Índice da Sub-Animação
+                            newSubInstance.sourceModIndex = indicesOpt->first;
+                            newSubInstance.sourceSubAnimIndex = indicesOpt->second;
                             if (animJson.HasMember("sourceSubName") && animJson["sourceSubName"].IsString()) {
                                 const char* savedName = animJson["sourceSubName"].GetString();
                                 const auto& originSubAnim = _allMods[newSubInstance.sourceModIndex]
@@ -2766,62 +2851,162 @@ void AnimationManager::LoadCycleMovesets() {
             }
         };
 
-        if (std::filesystem::exists(oarRootPath)) {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(oarRootPath)) {
-                // Iremos procurar apenas por pastas que contenham um config.json, que definem um sub-moveset.
-                if (entry.is_regular_file() && entry.path().filename() == "config.json") {
+        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
+        const std::filesystem::path darRootPath =
+            "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
+
+        auto findAndMergeFiles = [&](const std::filesystem::path& root) {
+            if (!std::filesystem::exists(root)) return;
+
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+                if (entry.is_regular_file() &&
+                    (entry.path().filename() == "config.json" || entry.path().filename() == "user.json")) {
                     std::filesystem::path currentFolder = entry.path().parent_path();
+                    std::vector<std::filesystem::path> filesToMerge;
+                    const std::string prefix = "User_CycleMoveset";
 
-                    std::filesystem::path userFile = currentFolder / "User_CycleMoveset.json";
-                    std::filesystem::path defaultFile = currentFolder / "CycleMoveset.json";
-
-                    bool userFileExists = std::filesystem::exists(userFile);
-
-                    // Cenário 1: User_CycleMoveset.json existe.
-                    if (userFileExists) {
-                        // Tentamos processá-lo. A função retorna `true` se tiver conteúdo e for processado.
-                        // Se o arquivo existir mas estiver vazio ou mal-formado, a função retorna `false`
-                        // e nós NÃO tentamos carregar o arquivo de fallback, respeitando a intenção do usuário.
-                        processJsonFile(userFile);
+                    // PASSO 1: Encontrar todos os arquivos que precisam ser unidos
+                    for (const auto& dirEntry : std::filesystem::directory_iterator(currentFolder)) {
+                        if (dirEntry.is_regular_file() && dirEntry.path().filename().string().starts_with(prefix) &&
+                            dirEntry.path().extension() == ".json") {
+                            filesToMerge.push_back(dirEntry.path());
+                        }
                     }
-                    // Cenário 2: User_CycleMoveset.json NÃO existe.
-                    else {
-                        // Procuramos pelo arquivo de fallback.
+
+                    // Se não houver arquivos 'User_*', procurar pelo 'CycleMoveset.json' de fallback
+                    if (filesToMerge.empty()) {
+                        std::filesystem::path defaultFile = currentFolder / "CycleMoveset.json";
                         if (std::filesystem::exists(defaultFile)) {
-                            processJsonFile(defaultFile);
+                            std::ifstream ifs(defaultFile);
+                            if (!ifs.is_open()) continue;
+                            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+                            rapidjson::Document doc;
+                            doc.Parse(jsonContent.c_str());
+                            if (!doc.HasParseError()) {
+                                processJsonDocument(doc);
+                            }
+                        }
+                        continue;  // Pula para a próxima pasta
+                    }
+
+                    // PASSO 2: Lógica de Merge
+                    rapidjson::Document masterDoc;
+                    masterDoc.SetArray();
+                    auto& allocator = masterDoc.GetAllocator();
+
+                    for (const auto& filePath : filesToMerge) {
+                        std::ifstream ifs(filePath);
+                        if (!ifs.is_open()) continue;
+                        std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+
+                        rapidjson::Document patchDoc;
+                        patchDoc.Parse(jsonContent.c_str());
+
+                        if (patchDoc.HasParseError() || !patchDoc.IsArray()) {
+                            SKSE::log::warn("Arquivo de patch mal formatado, pulando: {}", filePath.string());
+                            continue;
+                        }
+
+                        // Início do merge profundo
+                        for (auto& newProfile : patchDoc.GetArray()) {
+                            if (!newProfile.IsObject() || !newProfile.HasMember("Identifier")) continue;
+                            const char* newProfileId = newProfile["Identifier"].GetString();
+
+                            rapidjson::Value* masterProfile = nullptr;
+                            for (auto& p : masterDoc.GetArray()) {
+                                if (p.IsObject() && p.HasMember("Identifier") &&
+                                    strcmp(p["Identifier"].GetString(), newProfileId) == 0) {
+                                    masterProfile = &p;
+                                    break;
+                                }
+                            }
+
+                            if (!masterProfile) {  // Perfil não existe, apenas copia
+                                rapidjson::Value newProfileCopy;
+                                newProfileCopy.CopyFrom(newProfile, allocator);
+                                masterDoc.PushBack(newProfileCopy, allocator);
+                            } else {  // Perfil existe, mescla o "Menu"
+                                if (newProfile.HasMember("Menu") && newProfile["Menu"].IsArray()) {
+                                    for (auto& newCategory : newProfile["Menu"].GetArray()) {
+                                        if (!newCategory.IsObject() || !newCategory.HasMember("Category")) continue;
+                                        const char* newCategoryName = newCategory["Category"].GetString();
+
+                                        rapidjson::Value* masterCategory = nullptr;
+                                        for (auto& c : (*masterProfile)["Menu"].GetArray()) {
+                                            if (c.IsObject() && c.HasMember("Category") &&
+                                                strcmp(c["Category"].GetString(), newCategoryName) == 0) {
+                                                masterCategory = &c;
+                                                break;
+                                            }
+                                        }
+
+                                        if (!masterCategory) {  // Categoria não existe, copia
+                                            rapidjson::Value newCategoryCopy;
+                                            newCategoryCopy.CopyFrom(newCategory, allocator);
+                                            (*masterProfile)["Menu"].PushBack(newCategoryCopy, allocator);
+                                        } else {  // Categoria existe, mescla "stances" sem duplicar
+                                            if (newCategory.HasMember("stances") && newCategory["stances"].IsArray()) {
+                                                for (auto& newStance : newCategory["stances"].GetArray()) {
+                                                    bool isDuplicate = false;
+                                                    if (newStance.IsObject() && newStance.HasMember("name") &&
+                                                        newStance.HasMember("index")) {
+                                                        for (auto& masterStance :
+                                                             (*masterCategory)["stances"].GetArray()) {
+                                                            if (masterStance.IsObject() &&
+                                                                masterStance.HasMember("name") &&
+                                                                masterStance.HasMember("index") &&
+                                                                masterStance["index"].GetInt() ==
+                                                                    newStance["index"].GetInt() &&
+                                                                strcmp(masterStance["name"].GetString(),
+                                                                       newStance["name"].GetString()) == 0) {
+                                                                isDuplicate = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if (!isDuplicate) {
+                                                        rapidjson::Value newStanceCopy;
+                                                        newStanceCopy.CopyFrom(newStance, allocator);
+                                                        (*masterCategory)["stances"].PushBack(newStanceCopy, allocator);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // PASSO 3: Processar o documento final mesclado e fazer a limpeza
+                    if (masterDoc.IsArray() && !masterDoc.Empty()) {
+                        processJsonDocument(masterDoc);
+
+                        std::filesystem::path canonicalPath = currentFolder / "User_CycleMoveset.json";
+                        std::ofstream ofs(canonicalPath);
+                        if (ofs) {
+                            rapidjson::StringBuffer buffer;
+                            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                            masterDoc.Accept(writer);
+                            ofs << buffer.GetString();
+                            ofs.close();
+                            SKSE::log::info("Arquivo mesclado salvo em: {}", canonicalPath.string());
+                        }
+
+                        // Apaga os arquivos de patch (exceto o canônico, caso ele estivesse na lista)
+                        for (const auto& filePath : filesToMerge) {
+                            if (filePath != canonicalPath) {
+                                std::filesystem::remove(filePath);
+                                SKSE::log::info("Arquivo de patch removido: {}", filePath.string());
+                            }
                         }
                     }
                 }
             }
-        }
-        if (std::filesystem::exists(darRootPath)) {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(darRootPath)) {
-                // Iremos procurar apenas por pastas que contenham um config.json, que definem um sub-moveset.
-                if (entry.is_regular_file() && entry.path().filename() == "user.json") {
-                    std::filesystem::path currentFolder = entry.path().parent_path();
+        };
 
-                    std::filesystem::path userFile = currentFolder / "User_CycleMoveset.json";
-                    std::filesystem::path defaultFile = currentFolder / "CycleMoveset.json";
-
-                    bool userFileExists = std::filesystem::exists(userFile);
-
-                    // Cenário 1: User_CycleMoveset.json existe.
-                    if (userFileExists) {
-                        // Tentamos processá-lo. A função retorna `true` se tiver conteúdo e for processado.
-                        // Se o arquivo existir mas estiver vazio ou mal-formado, a função retorna `false`
-                        // e nós NÃO tentamos carregar o arquivo de fallback, respeitando a intenção do usuário.
-                        processJsonFile(userFile);
-                    }
-                    // Cenário 2: User_CycleMoveset.json NÃO existe.
-                    else {
-                        // Procuramos pelo arquivo de fallback.
-                        if (std::filesystem::exists(defaultFile)) {
-                            processJsonFile(defaultFile);
-                        }
-                    }
-                }
-            }
-        }
+        findAndMergeFiles(oarRootPath);
+        findAndMergeFiles(darRootPath);
         
 
         // <<< MUDANÇA: Adiciona um passo de ordenação DEPOIS de carregar todos os arquivos
@@ -2849,7 +3034,11 @@ void AnimationManager::LoadCycleMovesets() {
 
         SKSE::log::info("Carregamento de regras concluído.");
         UpdateMaxMovesetCache();
+    } catch (const std::filesystem::filesystem_error& e) {
+        SKSE::log::critical("Erro de filesystem em LoadCycleMovesets: {}", e.what());
+        RE::DebugNotification("CRITICAL ERROR loading moveset files! Check logs.");
     }
+}
 
 
 
@@ -4572,7 +4761,7 @@ void AnimationManager::DrawNpcSelectionModal() {
 
     void AnimationManager::PopulateHkxFiles(CreatorSubAnimationInstance& instance) {
         if (!instance.sourceDef) return;
-
+        try {
         // Garante que o caminho é um diretório
         std::filesystem::path sourceDirectory = instance.sourceDef->path;
         if (std::filesystem::is_regular_file(sourceDirectory)) {
@@ -4593,6 +4782,10 @@ void AnimationManager::DrawNpcSelectionModal() {
                     instance.hkxFileSelection[fileEntry.path().filename().string()] = true;
                 }
             }
+        }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::critical("Erro de filesystem em PopulateHkxFiles ao ler de '{}': {}",
+                                (instance.sourceDef ? instance.sourceDef->path.string() : "path_invalido"), e.what());
         }
     }
 
@@ -4863,8 +5056,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
                     // PASSO 2: Calcular o "Score de Proximidade"
                     // O score é a "distância" total das condições. Quanto menor, melhor.
                     float hp_distance = modInst.hp - hpPercent;  // Ex: Se HP é 40 e a condição é 50, a distância é 10.
-                    float level_distance =
-                        level - modInst.level;  // Ex: Se Lvl é 20 e a condição é 15, a distância é 5.
+                    float level_distance = level - modInst.level;  // Ex: Se Lvl é 20 e a condição é 15, a distância é 5.
                     float st_distance = modInst.st - stPercent;
                     float mn_distance = modInst.mn - mkPercent;
 
@@ -4918,4 +5110,30 @@ void AnimationManager::LoadGameDataForNpcRules() {
             }
         }
         return std::nullopt;  // Não encontrado
+    }
+
+    void AnimationManager::AddFullCategoryConditions(rapidjson::Value& parentArray, const WeaponCategory& category,
+                                                     rapidjson::Document::AllocatorType& allocator) {
+        // Condição de Tipo de Equipamento (Mão Direita)
+        AddCompareEquippedTypeCondition(parentArray, category.equippedTypeValue, false, allocator);
+
+        // Condições de Keyword (Mão Direita) - Inclusão e Exclusão
+        AddKeywordOrConditions(parentArray, category.keywords, false, allocator);
+        AddCompetingKeywordExclusions(parentArray, &category, false, allocator);
+
+        // Condições para Mão Esquerda (se aplicável)
+        if (category.leftHandEquippedTypeValue >= 0.0) {
+            AddCompareEquippedTypeCondition(parentArray, category.leftHandEquippedTypeValue, true, allocator);
+        }
+
+        // Condições de Keyword para Mão Esquerda (se aplicável)
+        if (!category.leftHandKeywords.empty()) {
+            AddKeywordOrConditions(parentArray, category.leftHandKeywords, true, allocator);
+            AddCompetingKeywordExclusions(parentArray, &category, true, allocator);
+        }
+
+        // Lógica especial para a categoria base "Shield" para excluir customizadas
+        if (category.isShieldCategory && !category.isCustom) {
+            AddShieldCategoryExclusions(parentArray, allocator);
+        }
     }
