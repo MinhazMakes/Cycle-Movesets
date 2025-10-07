@@ -76,6 +76,15 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         } else {
             SKSE::log::error("Falha ao obter um ClientID da SkyPromptAPI. A API esta instalada?");
         }
+        GlobalControl::MenuShowing = SkyPromptAPI::RequestClientID();
+        if (GlobalControl::MenuShowing > 0) {
+            SKSE::log::info("ClientID {} recebido da SkyPromptAPI.", GlobalControl::MenuShowing);
+            if (!SkyPromptAPI::RequestTheme(GlobalControl::MenuShowing, "Cycle Movesets")) {
+			    logger::error("Falha ao solicitar o tema 'Cycle Movesets' na SkyPromptAPI.");
+            }
+        } else {
+            SKSE::log::error("Falha ao obter um ClientID da SkyPromptAPI. A API esta instalada?");
+        }
         AnimationManager::GetSingleton()->PopulateNpcList();
         AnimationManager::GetSingleton()->LoadGameDataForNpcRules();
         

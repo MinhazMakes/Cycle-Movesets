@@ -121,7 +121,7 @@
             shouldConvertToBFCO = doc["convertBFCO"].GetBool();
         }
 
-        if (shouldConvertToBFCO && filesCopied > 0) {
+        if (shouldConvertToBFCO) {
             SKSE::log::info("Iniciando conversão de MCO para BFCO...");
             int filesRenamed = 0;
             for (const auto& fileEntry : std::filesystem::directory_iterator(destinationPath)) {
@@ -434,7 +434,7 @@
 
         // Caminho base para as nossas pastas de fallback.
         const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
-        const std::filesystem::path fallbackRootPath = oarRootPath / "_CycleMoveset_Fallbacks";
+        const std::filesystem::path fallbackRootPath = oarRootPath / "_CMF Fallbacks";
 
         try {
             // Garante que a pasta base "_CycleMoveset_Fallbacks" exista
@@ -454,8 +454,8 @@
             auto& allocator = doc.GetAllocator();
 
             // Adiciona informações básicas para que o OAR reconheça a pasta
-            doc.AddMember("name", "[CycleMoveset] Fallback Animations", allocator);
-            doc.AddMember("author", "Cycle Moveset Manager", allocator);
+            doc.AddMember("name", "[CMF] Fallback Animations", allocator);
+            doc.AddMember("author", "viny", allocator);
             doc.AddMember("description", "Pasta auto-gerada para conter animações de fallback. Não edite manualmente.",
                           allocator);
 
@@ -484,25 +484,57 @@
                 const CategoryInstance& instance = category.instances[i];
                 // Se não houver nenhum moveset configurado para esta stance, não há necessidade de criar uma pasta de
                 // fallback para ela.
-                if (instance.modInstances.empty()) {
-                    continue;
-                }
-
-                std::string fallbackFolderName = std::format("Fallback_{}_{}", category.name, i);
-                std::filesystem::path fallbackStancePath = fallbackRootPath / fallbackFolderName;
-
-                std::filesystem::create_directory(fallbackStancePath);
-
-                std::set<std::string> copiedFiles;
-                int filesCopiedCount = 0;
-
+                int playlistCounter = 1;
                 for (const auto& modInst : instance.modInstances) {
-                    if (!modInst.isSelected) continue;
+                    if (!modInst.isSelected) {
+                        playlistCounter++;  // Incrementa o contador mesmo se o moveset for pulado
+                        continue;
+                    }
+
+                    const auto& sourceMod = _allMods[modInst.sourceModIndex];
+
+                    // 3. CRIAÇÃO DA PASTA ÚNICA PARA O MOVESET
+                    std::string sanitizedModName = sourceMod.name;
+                    std::ranges::replace_if(sanitizedModName, [](char c) { return !isalnum(c); }, '_');
+
+                    std::string fallbackFolderName =
+                        std::format("Fallback_{}_{}_P{}_{}", category.name, i, playlistCounter, sanitizedModName);
+                    std::filesystem::path fallbackMovesetPath = fallbackRootPath / fallbackFolderName;
+
+                    try {
+                        std::filesystem::create_directory(fallbackMovesetPath);
+                    } catch (const std::filesystem::filesystem_error& e) {
+                        SKSE::log::error("Falha ao criar o diretório de fallback do moveset: {}. Erro: {}",
+                                         fallbackMovesetPath.string(), e.what());
+                        playlistCounter++;
+                        continue;
+                    }
+
+                    // 4. LÓGICA DE CÓPIA COM PRIORIDADE PARA O PAI
+                    std::set<std::string> copiedFiles;
+                    int filesCopiedCount = 0;
+
+                    // Separa os sub-movesets em pais e filhos para dar prioridade
+                    std::vector<const SubAnimationInstance*> parentSubInsts;
+                    std::vector<const SubAnimationInstance*> childSubInsts;
                     for (const auto& subInst : modInst.subAnimationInstances) {
                         if (!subInst.isSelected) continue;
 
+                        bool isParent = !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                          subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                          subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+
+                        if (isParent) {
+                            parentSubInsts.push_back(&subInst);
+                        } else {
+                            childSubInsts.push_back(&subInst);
+                        }
+                    }
+
+                    // Função auxiliar para copiar os arquivos de um sub-moveset
+                    auto copySubMovesetFiles = [&](const SubAnimationInstance* subInst) {
                         const auto& sourceSubAnim =
-                            _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
+                            _allMods[subInst->sourceModIndex].subAnimations[subInst->sourceSubAnimIndex];
                         std::filesystem::path sourceDirectory = sourceSubAnim.path.parent_path();
 
                         if (std::filesystem::exists(sourceDirectory) &&
@@ -510,57 +542,69 @@
                             for (const auto& fileEntry : std::filesystem::directory_iterator(sourceDirectory)) {
                                 if (fileEntry.is_regular_file() && fileEntry.path().extension() == ".hkx") {
                                     std::string filename = fileEntry.path().filename().string();
+                                    // A condição principal: só copia se o arquivo ainda não foi copiado (dando
+                                    // prioridade ao pai)
                                     if (copiedFiles.find(filename) == copiedFiles.end()) {
-                                        CopySingleFile(fileEntry.path(), fallbackStancePath, filesCopiedCount);
+                                        CopySingleFile(fileEntry.path(), fallbackMovesetPath, filesCopiedCount);
                                         copiedFiles.insert(filename);
                                     }
                                 }
                             }
                         }
+                    };
+
+                    // Primeiro, copia os arquivos de todos os pais
+                    for (const auto* parent : parentSubInsts) {
+                        copySubMovesetFiles(parent);
                     }
-                }
+                    // Depois, copia os arquivos dos filhos (que ainda não existirem)
+                    for (const auto* child : childSubInsts) {
+                        copySubMovesetFiles(child);
+                    }
 
-                if (filesCopiedCount > 0) {
-                    rapidjson::Document doc;
-                    doc.SetObject();
-                    auto& allocator = doc.GetAllocator();
+                    // 5. GERAÇÃO DO CONFIG.JSON PARA O MOVESET
+                    if (filesCopiedCount > 0) {
+                        rapidjson::Document doc;
+                        doc.SetObject();
+                        auto& allocator = doc.GetAllocator();
 
-                    doc.AddMember("name", rapidjson::Value(fallbackFolderName.c_str(), allocator), allocator);
-                    doc.AddMember("priority", 2090000000, allocator);
-                    doc.AddMember("isCycleMovesetFallback", true, allocator);
+                        doc.AddMember("name", rapidjson::Value(fallbackFolderName.c_str(), allocator), allocator);
+                        doc.AddMember("priority", 2095000000, allocator);  // Prioridade intermediária
+                        doc.AddMember("isCycleMovesetFallback", true, allocator);
 
-                    rapidjson::Value conditions(rapidjson::kArrayType);
-                    rapidjson::Value masterAndBlock(rapidjson::kObjectType);
-                    masterAndBlock.AddMember("condition", "AND", allocator);
-                    rapidjson::Value andConditions(rapidjson::kArrayType);
+                        rapidjson::Value conditions(rapidjson::kArrayType);
+                        rapidjson::Value masterAndBlock(rapidjson::kObjectType);
+                        masterAndBlock.AddMember("condition", "AND", allocator);
+                        rapidjson::Value andConditions(rapidjson::kArrayType);
 
-                    // Condições específicas para esta pasta de fallback
-                    AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false,
-                                            allocator);  // Apenas para o JOGADOR
-                    AddCompareValuesCondition(andConditions, "cycle_instance", i + 1,
-                                              allocator);  // Apenas para esta STANCE
-                    AddFullCategoryConditions(andConditions, category,
-                                              allocator);  // E apenas para esta CATEGORIA DE ARMA
-                    // Note que NÃO há condição para "testarone"
+                        // Condições: Player, Stance, Arma e o `testarone` específico deste moveset
+                        AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false, allocator);
+                        AddCompareValuesCondition(andConditions, "cycle_instance", i + 1, allocator);
+                        AddFullCategoryConditions(andConditions, category, allocator);
+                        AddCompareValuesCondition(andConditions, "testarone", playlistCounter, allocator);
 
-                    masterAndBlock.AddMember("Conditions", andConditions, allocator);
-                    conditions.PushBack(masterAndBlock, allocator);
-                    doc.AddMember("conditions", conditions, allocator);
+                        masterAndBlock.AddMember("Conditions", andConditions, allocator);
+                        conditions.PushBack(masterAndBlock, allocator);
+                        doc.AddMember("conditions", conditions, allocator);
 
-                    std::ofstream ofs(fallbackStancePath / "config.json");
-                    rapidjson::StringBuffer buffer;
-                    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
-                    doc.Accept(writer);
-                    ofs << buffer.GetString();
-                } else {
-                    // Se nenhum arquivo foi copiado (ex: movesets sem animações), remove a pasta vazia.
-                    std::filesystem::remove(fallbackStancePath);
-                }
-            }
-        }
+                        std::ofstream ofs(fallbackMovesetPath / "config.json");
+                        rapidjson::StringBuffer buffer;
+                        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                        doc.Accept(writer);
+                        ofs << buffer.GetString();
 
-        SKSE::log::info("Geração de pastas de fallback do jogador concluída.");
+                    } else {
+                        std::filesystem::remove(fallbackMovesetPath);
+                    }
+
+                    playlistCounter++;  // Incrementa para o próximo moveset na lista
+                }  // Fim do loop de movesets
+            }  // Fim do loop de stances
+        }  // Fim do loop de categorias
+
+        SKSE::log::info("Geração de pastas de fallback por moveset concluída.");
     }
+
     // --- Lógica da Interface de Usuário ---
     void AnimationManager::DrawAddModModal() {
         if (_isAddModModalOpen) {
@@ -1241,7 +1285,7 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
         ImGui::PopID();
     }
 
-    void AnimationManager::DrawAnimationManager() {
+void AnimationManager::DrawAnimationManager() {
         if (ImGui::Button(LOC("save"))) {
             SaveAllSettings();
         }
@@ -1257,11 +1301,21 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
         }
 
         if(ImGui::BeginTabBar("WeaponTypeTabs")) {
-            if (ImGui::BeginTabItem(LOC("tab_single_wield"))) {
+            if (ImGui::BeginTabItem("One-Handed")) {
                 for (auto& pair : _categories) {
                     WeaponCategory& category = pair.second;
-                    if (!category.isDualWield && !category.isShieldCategory) {  // Filtro
-                        DrawCategoryUI(pair.second);
+                    if (category.leftHandEquippedTypeValue != -1.0 && !category.isDualWield &&
+                            !category.isShieldCategory) {
+                        DrawCategoryUI(category);  // Desenha a UI para esta categoria
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Two-Handed")) {
+                for (auto& pair : _categories) {
+                    WeaponCategory& category = pair.second;
+                    if (category.leftHandEquippedTypeValue == -1.0) {
+                        DrawCategoryUI(category);
                     }
                 }
                 ImGui::EndTabItem();
@@ -1316,10 +1370,21 @@ void AnimationManager::DrawNPCManager() {
 
             // Reutiliza a mesma TabBar e lógica de UI que você já tinha para NPCs
             if (ImGui::BeginTabBar("WeaponTypeTabs_NPC_Edit")) {
-                if (ImGui::BeginTabItem(LOC("tab_single_wield"))) {
+                if (ImGui::BeginTabItem("One-Handed")) {
                     for (auto& pair : categoriesToDraw) {
-                        if (!pair.second.isDualWield && !pair.second.isShieldCategory) {
-                            DrawNPCCategoryUI(pair.second);  // Reutiliza a função de UI existente!
+                        WeaponCategory& category = pair.second;
+                        if (category.leftHandEquippedTypeValue != -1.0 && !category.isDualWield &&
+                            !category.isShieldCategory) {
+                            DrawNPCCategoryUI(category);  // Desenha a UI para esta categoria
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Two-Handed")) {
+                    for (auto& pair : categoriesToDraw) {
+                        WeaponCategory& category = pair.second;
+                        if (category.leftHandEquippedTypeValue == -1.0) {
+                            DrawNPCCategoryUI(category);
                         }
                     }
                     ImGui::EndTabItem();
@@ -1861,7 +1926,7 @@ void AnimationManager::SaveAllSettings() {
                                 configPath = sourceSubAnim.path / "user.json";
                             } else {
                                 // Para OAR, o path já é o arquivo config.json.
-                                configPath = sourceSubAnim.path;
+                                configPath = sourceSubAnim.path.parent_path() / "user.json";
                             }
                             fileUpdates[configPath].push_back(config);
                         }

@@ -24,6 +24,7 @@ namespace GlobalControl {
     extern int g_directionalState; 
     // ID do nosso plugin com a API SkyPrompt
     inline SkyPromptAPI::ClientID g_clientID = 0;
+    inline SkyPromptAPI::ClientID MenuShowing = 0;
     inline bool g_isWeaponDrawn = false;
     inline bool Cycleopen = false;
     inline bool MovesetChangesOpen = false;

@@ -323,7 +323,10 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                 GlobalControl::StanceChangesOpen = true;
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
                 SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
-                if (!SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), g_clientID)) {
+                /*if (!Settings::ShowMenu) {
+                    SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets");
+                }*/
+                if (!SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing)) {
                     logger::error("Skyprompt didnt worked Stances Changes Sink");
                 }
                 break;
@@ -332,15 +335,18 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
         case SkyPromptAPI::kUp:
             except = false;
             GlobalControl::StanceChangesOpen = false;
-            SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), GlobalControl::g_clientID);
+            /*if (!Settings::ShowMenu) {
+                SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets_hidden");
+            }*/
+            SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
             if (SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID)){}
-            if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), GlobalControl::g_clientID)) {
+            if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID)) {
                 logger::error("Skyprompt didnt worked Moveset Sink");
             }
             break;        
         case SkyPromptAPI::kTimeout:
             if (SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID)){}
-            if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), GlobalControl::g_clientID)) {
+            if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID)) {
                 logger::error("Skyprompt didnt worked Moveset Sink");
             }
             break;        
@@ -379,8 +385,8 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 }
                 UpdatePowerAttackGlobals();
                 UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), MenuShowing);
+                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
                 break;
@@ -392,22 +398,25 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 }
                 UpdatePowerAttackGlobals();
                 UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), MenuShowing);
+                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
                 break;
             }
         case SkyPromptAPI::kTimeout:
-            SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), g_clientID);
+            SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
             break;
         case SkyPromptAPI::kUp:
             if (event.prompt.eventID == 0) {
                 GlobalControl::StanceChangesOpen = false;
-                SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), GlobalControl::g_clientID);
+                /*if (!Settings::ShowMenu) {
+                    SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets_hidden");
+                }*/
+                SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
                 if (SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID)) {
                 }
-                if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), GlobalControl::g_clientID)) {
+                if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID)) {
                     logger::error("Skyprompt didnt worked Moveset Sink");
                 }
             }
@@ -436,18 +445,24 @@ void GlobalControl::MovesetSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
             if (!except) {
                 except = true;
                 GlobalControl::MovesetChangesOpen = true;
+                /*if (!Settings::ShowMenu) {
+                    SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets");
+                }*/
                 SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), GlobalControl::g_clientID);
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), GlobalControl::g_clientID);
-                if (!SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), GlobalControl::g_clientID)) {
+                if (!SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing)) {
                     logger::error("Skyprompt didnt worked Stances Changes Sink");
                 }
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
                 break;
             }
         case SkyPromptAPI::kUp:
             except = false;
             GlobalControl::MovesetChangesOpen = false;
-            SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), GlobalControl::g_clientID);
+            /*if (!Settings::ShowMenu) {
+                SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets_hidden");
+            }*/
+            SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
             SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
             SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             break;
@@ -493,7 +508,7 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 logger::info("teste {}", MovesetText);
                 RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
             }
             if (event.prompt.eventID == 3) {
@@ -506,7 +521,7 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 logger::info("teste {}", MovesetText);
                 RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
             }
         /*case SkyPromptAPI::kTimeout:
@@ -515,9 +530,12 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
         case SkyPromptAPI::kUp:
             if (event.prompt.eventID == 1) {
                 GlobalControl::MovesetChangesOpen = false;
-                SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), GlobalControl::g_clientID);
+                if (!Settings::ShowMenu) {
+                    SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets_hidden");
+                }
+                SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), GlobalControl::g_clientID);
+                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             }
             logger::info("kUp aceito");
             break;
@@ -536,8 +554,8 @@ RE::BSEventNotifyControl GlobalControl::CameraChange::ProcessEvent(const SKSE::C
         Cycleopen = false;
         SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
         SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-        SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), g_clientID);
-        SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+        SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+        SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
         //logger::info("me retorna aqui vei");
     }
     if (ShouldShowPrompts() && !Cycleopen) {
@@ -578,8 +596,8 @@ RE::BSEventNotifyControl GlobalControl::ActionEventHandler::ProcessEvent(const S
             // Limpa os prompts da API, fazendo o menu desaparecer
             SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
             SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-            SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), g_clientID);
-            SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+            SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+            SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
         }
     }
     return RE::BSEventNotifyControl::kContinue;
@@ -884,8 +902,8 @@ RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE:
                 Cycleopen = false;
                 SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+                SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
         }
         return RE::BSEventNotifyControl::kContinue;  // Finaliza após tratar o jogador
@@ -1006,24 +1024,24 @@ void GlobalControl::UpdateSkyPromptTexts() {
         MovesetBackText = "Next";
     }
 
-    stance_actual = SkyPromptAPI::Prompt(StanceText, 0, 0, SkyPromptAPI::PromptType::kSinglePress, Settings::ShowMenu ? 20 : 0,
+    stance_actual = SkyPromptAPI::Prompt(StanceText, 0, 0, SkyPromptAPI::PromptType::kSinglePress, 20,
                                          Stances_menu,
                                          0xFFFFFFFF, 0.999f);
     moveset_actual = SkyPromptAPI::Prompt(MovesetText, 1, 0, SkyPromptAPI::PromptType::kSinglePress,
-                                          Settings::ShowMenu ? 20 : 0, Moveset_menu,
+                                          20, Moveset_menu,
                                           0xFFFFFFFF, 0.999f);
     menu_stance = SkyPromptAPI::Prompt(StanceText, 0, 0, SkyPromptAPI::PromptType::kHoldAndKeep,
                                        Settings::ShowMenu ? 20 : 0, Stances_menu);
     stance_next = SkyPromptAPI::Prompt(StanceNextText, 3, 0, SkyPromptAPI::PromptType::kSinglePress,
-                                       Settings::ShowMenu ? 20 : 0, Next_key);
+                                       20, Next_key);
     stance_back = SkyPromptAPI::Prompt(StanceBackText, 2, 0, SkyPromptAPI::PromptType::kSinglePress,
-                                       Settings::ShowMenu ? 20 : 0, Back_key);
+                                       20, Back_key);
     menu_moveset = SkyPromptAPI::Prompt(MovesetText, 1, 0, SkyPromptAPI::PromptType::kHoldAndKeep,
                                         Settings::ShowMenu ? 20 : 0, Moveset_menu);
     moveset_next = SkyPromptAPI::Prompt(MovesetNextText, 3, 0, SkyPromptAPI::PromptType::kSinglePress,
-                                        Settings::ShowMenu ? 20 : 0, Next_key);
+                                        20, Next_key);
     moveset_back = SkyPromptAPI::Prompt(MovesetBackText, 2, 0, SkyPromptAPI::PromptType::kSinglePress,
-                                        Settings::ShowMenu ? 20 : 0, Back_key);
+                                        20, Back_key);
 
     StancesSink::GetSingleton()->UpdatePrompts();
     StancesChangesSink::GetSingleton()->UpdatePrompts();
@@ -1160,7 +1178,7 @@ void GlobalControl::UpdatePromptVisibility() {
         Cycleopen = false;
         SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
         SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-        SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), g_clientID);
-        SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), g_clientID);
+        SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+        SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
     }
 }
