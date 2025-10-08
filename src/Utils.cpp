@@ -187,7 +187,7 @@ void GlobalControl::InputListener::UpdateDirectionalState() {
         }
 
         if (ShouldShowPrompts() && GlobalControl::MovesetChangesOpen && !GlobalControl::StanceChangesOpen) {
-            SkyPromptAPI::SendPrompt(GlobalControl::MovesetChangesSink::GetSingleton(), GlobalControl::g_clientID);
+            SkyPromptAPI::SendPrompt(GlobalControl::MovesetChangesSink::GetSingleton(), GlobalControl::MenuShowing);
             
             //SKSE::log::info("SkyPrompt reenviado devido à mudança de direção e menu aberto.");
         }
@@ -507,7 +507,7 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 UpdateSkyPromptTexts();
                 logger::info("teste {}", MovesetText);
                 RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
             }
@@ -520,13 +520,13 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 UpdateSkyPromptTexts();
                 logger::info("teste {}", MovesetText);
                 RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
+                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
             }
-        /*case SkyPromptAPI::kTimeout:
-            SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), g_clientID);
-            break;*/
+        case SkyPromptAPI::kTimeout:
+            SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
+            break;
         case SkyPromptAPI::kUp:
             if (event.prompt.eventID == 1) {
                 GlobalControl::MovesetChangesOpen = false;
@@ -818,57 +818,58 @@ void GlobalControl::NPCrandomNumber(RE::Actor* targetActor, const std::string& e
 
     std::string category = GetActorWeaponCategoryName(targetActor);
 
-    // Pega a lista de índices de movesets DISPONÍVEIS AGORA
-    std::vector<int> availableMovesets =
+    // 1. Pega a lista de candidatos DISPONÍVEIS
+    std::vector<MovesetCandidate> availableMovesets =
         AnimationManager::GetSingleton()->GetAvailableMovesetIndices(targetActor, category);
 
-    if (availableMovesets.size() < 2) {  // Não há o que ciclar se tiver 0 ou 1 opção
-        // Opcional: Se houver 1, você pode setar para ele. Se 0, não faz nada.
+    if (availableMovesets.size() < 2) {
         if (!availableMovesets.empty()) {
-            targetActor->SetGraphVariableInt("testarone", availableMovesets[0]);
+            const auto& chosenMoveset = availableMovesets[0];
+            targetActor->SetGraphVariableInt("CycleMovesetNpcType", chosenMoveset.priority);
+            targetActor->SetGraphVariableInt("testarone", chosenMoveset.index);
         }
         return;
     }
 
-    // A lógica de "random inteligente" agora opera sobre a lista de movesets válidos
+    // 2. A lógica de "random inteligente" agora opera sobre a lista de candidatos
     RE::FormID formID = targetActor->GetFormID();
     std::lock_guard<std::mutex> lock(g_comboStateMutex);
     auto& state = g_npcComboStates[formID];
 
-    // Filtra a lista para não repetir os 2 últimos
-    std::vector<int> choices = availableMovesets;
+    // 3. Filtra a lista para não repetir os 2 últimos
+    std::vector<MovesetCandidate> choices = availableMovesets;
     choices.erase(std::remove(choices.begin(), choices.end(), state.lastMoveset), choices.end());
     choices.erase(std::remove(choices.begin(), choices.end(), state.previousMoveset), choices.end());
 
-    if (choices.empty()) {  // Se todos os válidos foram usados recentemente, usa a lista completa
+    if (choices.empty()) {
         choices = availableMovesets;
     }
 
-   std::vector<double> weights;
+    // Lógica de pesos (a mesma de antes)
+    std::vector<double> weights;
     weights.reserve(choices.size());
     for (size_t i = 0; i < choices.size(); ++i) {
-        // Ex: Se houver 4 escolhas, os pesos serão 4, 3, 2, 1.
         weights.push_back(static_cast<double>(choices.size() - i));
     }
 
     std::random_device rd;
     std::mt19937 gen(rd());
-
-    // PASSO 2: Configurar a distribuição ponderada (discreta) com base nos pesos.
     std::discrete_distribution<> distrib(weights.begin(), weights.end());
 
-    // PASSO 3: Realizar o sorteio. O resultado será um ÍNDICE da lista `choices`.
     int chosenListIndex = distrib(gen);
-    int chosenPlaylistIndex = choices[chosenListIndex];
+    const MovesetCandidate& chosenMoveset = choices[chosenListIndex];
 
-    // Atualiza o estado e a variável do jogo
-    targetActor->SetGraphVariableInt("testarone", chosenPlaylistIndex);
+    // 4. AQUI ESTÁ A CORREÇÃO FINAL: Enviamos a prioridade e o índice corretos!
+    targetActor->SetGraphVariableInt("CycleMovesetNpcType", chosenMoveset.priority);
+    targetActor->SetGraphVariableInt("testarone", chosenMoveset.index);
+
+    // 5. Atualiza o estado com o candidato completo
     state.previousMoveset = state.lastMoveset;
-    state.lastMoveset = chosenPlaylistIndex;
+    state.lastMoveset = chosenMoveset;
 
-    SKSE::log::info("{} (Ator {:08X}): Escolheu o moveset #{}", eventSource, formID, chosenPlaylistIndex);
+    SKSE::log::info("{} (Ator {:08X}): Escolheu o moveset #{} da prioridade {}", eventSource, formID,
+                    chosenMoveset.index, chosenMoveset.priority);
 }
-
 RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE::TESCombatEvent* a_event,
                                                                        RE::BSTEventSource<RE::TESCombatEvent>*) {
     if (!a_event || !a_event->actor) {

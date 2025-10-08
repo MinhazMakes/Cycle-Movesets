@@ -17,6 +17,19 @@ namespace GlobalControl {
     // Ponteiro para a variável global, será preenchido quando o jogo carregar
     //inline RE::TESGlobal* g_targetGlobal = nullptr;
 
+    struct MovesetCandidate {
+        int index;     // O índice original do moveset (1, 2, 3...)
+        int priority;  // A prioridade da regra de onde ele veio (0, 1, 2...)
+        float score;   // O score de proximidade para ordenação
+
+        // Operador para permitir a ordenação com std::sort
+        bool operator<(const MovesetCandidate& other) const { return score < other.score; }
+
+        // Operador para comparações (usado para evitar repetições)
+        bool operator==(const MovesetCandidate& other) const {
+            return index == other.index && priority == other.priority;
+        }
+    };
     
     inline bool g_isPlayerInCombat = false;
     inline int g_currentStance = 0;
@@ -218,7 +231,13 @@ namespace GlobalControl {
         int previousMoveset = 0;
     };
     inline ComboState g_comboState;  // Instância global única
-    inline std::map<RE::FormID, ComboState> g_npcComboStates;
+    struct NpcComboState {
+        bool isTimerRunning = false;
+        std::chrono::steady_clock::time_point comboTimeoutTimestamp;
+        MovesetCandidate lastMoveset = {-1, -1, 0.0f};
+        MovesetCandidate previousMoveset = {-1, -1, 0.0f};
+    };
+    static std::map<RE::FormID, NpcComboState> g_npcComboStates;
     inline std::mutex g_comboStateMutex;  // Mutex para proteger o acesso ao mapa
     inline constexpr float fComboTimeout = 1.0f;
 

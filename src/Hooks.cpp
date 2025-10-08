@@ -14,6 +14,7 @@
 #include "ClibUtil/editorID.hpp"
 #include "Hooks.h"
 
+
     // Função auxiliar para copiar um único arquivo com logs
     void CopySingleFile(const std::filesystem::path& sourceFile, const std::filesystem::path& destinationPath,
                         int& filesCopied) {
@@ -767,7 +768,7 @@
 
     // Nova função para desenhar a interface de criação de movesets
     void AnimationManager::DrawUserMovesetCreator() {
-        ImGui::Text("Moveset Creator");
+        ImGui::Text("Moveset Creator its a tool for moveset Authors");
         ImGui::Separator();
 
         // Seção de botões principais
@@ -1969,6 +1970,66 @@ void AnimationManager::SaveAllSettings() {
         }
         gameisloaded = true;
 
+}
+
+void AnimationManager::DeleteManagedUserJsonFiles() {
+    SKSE::log::info("Iniciando a exclusão de todos os arquivos user.json gerenciados...");
+    int filesDeleted = 0;
+
+    const std::vector<std::filesystem::path> rootPaths = {
+        "Data/meshes/actors/character/animations/OpenAnimationReplacer",
+        "Data/meshes/actors/character/animations/DynamicAnimationReplacer/_CustomConditions"};
+
+    auto scanAndCleanDirectory = [&](const std::filesystem::path& root) {
+        if (!std::filesystem::exists(root) || !std::filesystem::is_directory(root)) {
+            SKSE::log::warn("Diretório de varredura não encontrado: {}", root.string());
+            return;
+        }
+
+        try {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+                if (entry.is_directory()) {
+                    const auto& dirPath = entry.path();
+
+                    // Verifica se a pasta é gerenciada (contém um dos arquivos marcadores)
+                    bool isManaged = std::filesystem::exists(dirPath / "CycleMoveset.json") ||
+                                     std::filesystem::exists(dirPath / "User_CycleMoveset.json");
+
+                    if (isManaged) {
+                        // Lista de todos os arquivos a serem deletados se a pasta for gerenciada
+                        const std::vector<std::filesystem::path> filesToDelete = {
+                            dirPath / "user.json", dirPath / "CycleMoveset.json", dirPath / "User_CycleMoveset.json"};
+
+                        for (const auto& filePath : filesToDelete) {
+                            if (std::filesystem::exists(filePath)) {
+                                try {
+                                    if (std::filesystem::remove(filePath)) {
+                                        SKSE::log::info("Arquivo deletado com sucesso: {}", filePath.string());
+                                        filesDeleted++;
+                                    } else {
+                                        SKSE::log::error("Falha ao deletar o arquivo (motivo desconhecido): {}",
+                                                         filePath.string());
+                                    }
+                                } catch (const std::filesystem::filesystem_error& e) {
+                                    SKSE::log::error("Exceção ao tentar deletar o arquivo {}: {}", filePath.string(),
+                                                     e.what());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::error("Erro de filesystem durante a varredura do diretório {}: {}", root.string(), e.what());
+        }
+    };
+
+    for (const auto& rootPath : rootPaths) {
+        scanAndCleanDirectory(rootPath);
+    }
+
+    SKSE::log::info("Exclusão concluída. Total de {} arquivos de configuração deletados.", filesDeleted);
+    RE::DebugNotification(std::format("{} configuration files were deleted.", filesDeleted).c_str());
 }
 
 
@@ -5067,39 +5128,19 @@ void AnimationManager::LoadGameDataForNpcRules() {
         return {&_generalNpcRule, 0, GetPriorityForType(RuleType::GeneralNPC)};
     }
 
-    std::vector<int> AnimationManager::GetAvailableMovesetIndices(RE::Actor* actor, const std::string& categoryName) {
+    std::vector<GlobalControl::MovesetCandidate> AnimationManager::GetAvailableMovesetIndices(
+        RE::Actor* actor,
+                                                                               const std::string& categoryName) {
         if (!actor) return {};
         //SKSE::log::info("---------------------------------------------------------------------");
         //SKSE::log::info("[GetAvailableIndices] Buscando índices para o ator: '{}', Categoria: '{}'", actor->GetName(),categoryName);
+        std::vector<GlobalControl::MovesetCandidate> candidates;
 
-        // 1. Chama a função modificada para obter o "match" completo
-        NpcRuleMatch match = FindBestMovesetConfiguration(actor, categoryName);
-        actor->SetGraphVariableInt("CycleMovesetNpcType", match.priority);
-        // 2. Acessa o ponteiro da regra diretamente do resultado
-        const MovesetRule* rule = match.rule;
-
-        // Medida de segurança, embora a função deva sempre retornar um ponteiro válido
-        if (!rule) {
-            SKSE::log::error("FindBestMovesetConfiguration retornou um ponteiro nulo inesperadamente!");
-            return {};
-        }
-        //SKSE::log::info("[GetAvailableIndices] Regra determinada: '{}'", rule->displayName);
-        // 2. Encontra a categoria de arma dentro da regra
-        auto categoryIt = rule->categories.find(categoryName);
-        if (categoryIt == rule->categories.end()) {
-            //SKSE::log::warn("[GetAvailableIndices] A regra '{}' não possui a categoria '{}'. Retornando lista vazia.",rule->displayName, categoryName);
-            return {};
-        }
-        const CategoryInstance& instance = categoryIt->second.instances[0];  // Stance 0 para NPCs
-
-        // 3. Obtém as estatísticas atuais do ator
-        // *** CÁLCULO DE HP CORRIGIDO ***
+        // Obtém os status do ator uma única vez
         float currentHealth = actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
         float maxHealth = actor->GetActorValueMax(RE::ActorValue::kHealth);
-        // Evita divisão por zero se o ator tiver 0 de vida máxima por algum motivo
         float hpPercent = (maxHealth > 0) ? (currentHealth / maxHealth) * 100.0f : 0.0f;
         int level = actor->GetLevel();
-
         float currentStamina = actor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
         float maxStamina = actor->GetActorValueMax(RE::ActorValue::kStamina);
         float stPercent = (maxStamina > 0) ? (currentStamina / maxStamina) * 100.0f : 0.0f;
@@ -5107,52 +5148,79 @@ void AnimationManager::LoadGameDataForNpcRules() {
         float maxMagicka = actor->GetActorValueMax(RE::ActorValue::kMagicka);
         float mkPercent = (maxMagicka > 0) ? (currentMagicka / maxMagicka) * 100.0f : 0.0f;
 
-        //SKSE::log::info("[GetAvailableIndices] Status atuais do ator -> HP: {:.2f} ({:.2f}/{:.2f}), Nível: {}",hpPercent, currentHealth, maxHealth, level);
-        std::vector<ScoredIndex> scoredCandidates;
-        int currentPlaylistIndex = 1;
+        // Função interna para processar uma regra e adicionar seus movesets à lista de candidatos
+        auto processRule = [&](const MovesetRule* rule) {
+            if (!rule) return;
 
-        for (const auto& modInst : instance.modInstances) {
-            if (modInst.isSelected) {
-                // Verifica se as condições são atendidas
-                bool conditionsMet = (hpPercent <= modInst.hp && level >= modInst.level && stPercent <= modInst.st &&
-                                      mkPercent <= modInst.mn);
+            auto categoryIt = rule->categories.find(categoryName);
+            if (categoryIt == rule->categories.end()) {
+                return;
+            }
 
-                if (conditionsMet) {
-                    // PASSO 2: Calcular o "Score de Proximidade"
-                    // O score é a "distância" total das condições. Quanto menor, melhor.
-                    float hp_distance = modInst.hp - hpPercent;  // Ex: Se HP é 40 e a condição é 50, a distância é 10.
-                    float level_distance = level - modInst.level;  // Ex: Se Lvl é 20 e a condição é 15, a distância é 5.
-                    float st_distance = modInst.st - stPercent;
-                    float mn_distance = modInst.mn - mkPercent;
+            const CategoryInstance& instance = categoryIt->second.instances[0];
+            int currentPriority = GetPriorityForType(rule->type);
+            int currentPlaylistIndex = 1;
 
-                    float totalScore = hp_distance + level_distance + st_distance + mn_distance;
+            for (const auto& modInst : instance.modInstances) {
+                if (modInst.isSelected) {
+                    bool conditionsMet = (hpPercent <= modInst.hp && level >= modInst.level &&
+                                          stPercent <= modInst.st && mkPercent <= modInst.mn);
+                    if (conditionsMet) {
+                        float hp_distance = modInst.hp - hpPercent;
+                        float level_distance = level - modInst.level;
+                        float st_distance = modInst.st - stPercent;
+                        float mn_distance = modInst.mn - mkPercent;
+                        float totalScore = hp_distance + level_distance + st_distance + mn_distance;
 
-                    scoredCandidates.push_back({currentPlaylistIndex, totalScore});
+                        // AQUI ESTÁ A MÁGICA: Adicionamos o candidato com seu índice e prioridade originais!
+                        candidates.push_back({currentPlaylistIndex, currentPriority, totalScore});
+                    }
                 }
                 currentPlaylistIndex++;
             }
+        };
+
+        if (Settings::EnableAllNPC) {
+            SKSE::log::info("[GetAvailableIndices] Modo 'EnableAllNPC' ativo. Combinando todas as regras aplicáveis.");
+
+            std::vector<ModInstance> combinedModInstances;
+            int highestPriority = -1;  // Começa com -1 para garantir que a prioridade 0 (General) seja pega corretamente
+
+            // 1. Itera por todas as regras específicas para encontrar matches
+            for (const auto& rule : _npcRules) {
+                bool match = false;
+                switch (rule.type) {
+                    case RuleType::UniqueNPC:
+                        if (actor->GetActorBase()->GetFormID() == rule.formID) match = true;
+                        break;
+                    case RuleType::Keyword:
+                        if (actor->GetActorBase()->HasKeywordString(rule.identifier)) match = true;
+                        break;
+                    case RuleType::Faction:
+                        if (actor->GetActorBase()->IsInFaction(
+                                RE::TESForm::LookupByEditorID<RE::TESFaction>(rule.identifier)))
+                            match = true;
+                        break;
+                    case RuleType::Race:
+                        if (actor->GetActorBase()->GetRace() ==
+                            RE::TESForm::LookupByEditorID<RE::TESRace>(rule.identifier))
+                            match = true;
+                        break;
+                    default:
+                        break;
+                }
+
+                if (match) {
+                    processRule(&rule);
+                }
+            }
+            processRule(&_generalNpcRule);
+        }  else {  
+            NpcRuleMatch match = FindBestMovesetConfiguration(actor, categoryName);
+            processRule(match.rule);
         }
-
-        // PASSO 3: Ordenar os candidatos pelo score (do menor para o maior)
-        std::sort(scoredCandidates.begin(), scoredCandidates.end());
-
-        // PASSO 4: Extrair apenas os índices ordenados para o resultado final
-        std::vector<int> availableIndices;
-        availableIndices.reserve(scoredCandidates.size());
-        for (const auto& candidate : scoredCandidates) {
-            availableIndices.push_back(candidate.index);
-        }
-
-        // Log final com a lista de resultados
-        std::string result_string = "[ ";
-        for (int idx : availableIndices) {
-            result_string += std::to_string(idx) + " ";
-        }
-        result_string += "]";
-        //SKSE::log::info("[GetAvailableIndices] Filtro concluído. Retornando índices disponíveis: {}", result_string);
-        //SKSE::log::info("---------------------------------------------------------------------");
-
-        return availableIndices;
+        std::sort(candidates.begin(), candidates.end());
+        return candidates;
     }
 
     void Settings::SyncMovementKeys() {

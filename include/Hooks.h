@@ -45,6 +45,7 @@ namespace Settings {
     inline int autoCycleMode = 1;       // 0: Disabled, 1: Auto Cycle, 2: Random Auto Cycle
     inline int menuVisibilityMode = 2;  // 0: Hidden, 1: Only in Combat, 2: When Weapon Draw
     inline bool bfcoDirectionalAttacks = true;
+    inline bool EnableAllNPC = true;
     
 }
 

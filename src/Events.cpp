@@ -120,13 +120,57 @@ namespace MyMenu {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(LOC("tooltip_menu_visibility"));  // Tooltip explicando as 3 opções
                 }
+                ImGui::Spacing();
+                if (ImGui::Checkbox("NPC moveset pool increase", &Settings::EnableAllNPC)) {
+                    settings_changed = true;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("NPC moveset pool gonna be all movesets avalible to him and not the ones with higher priority. \nIt gonna be NPC General + Race + Faction + Keyword + The NPC movesets");  // Tooltip explicando as 3 opções
+                }
                 if (ImGui::Checkbox("BFCO directional attacks", &Settings::bfcoDirectionalAttacks)) {
                     settings_changed = true;
-                    
                 }
                 
                 if (settings_changed) {
                     MyMenu::SaveSettings();
+                }
+                ImGui::Separator();
+                ImGui::Spacing();
+                if (ImGui::Button(LOC("delete_user_configs"))) {  // Ex: "Delete All User Configurations"
+                    ImGui::OpenPopup("Confirm Deletion");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        LOC("delete_user_configs_tooltip"));  // Ex: "Deletes all 'user.json' files from managed
+                                                              // folders. This will reset all your conditions."
+                }
+
+                // Pop-up de confirmação
+                const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                ImVec2 center =
+                    ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
+                ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+                if (ImGui::BeginPopupModal("Confirm Deletion", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text(LOC("delete_confirm_text"));  // Ex: "Are you sure? This will reset all
+                                                              // conditions.\nThis action cannot be undone."
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    if (ImGui::Button(LOC("confirm"), ImVec2(120, 0))) {  // Ex: "Confirm"
+                        AnimationManager::GetSingleton()->DeleteManagedUserJsonFiles();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SetItemDefaultFocus();
+                    ImGui::SameLine();
+                    if (ImGui::Button(LOC("cancel"), ImVec2(120, 0))) {  // Ex: "Cancel"
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
                 }
                 ImGui::EndTabItem();
             }
@@ -209,6 +253,7 @@ namespace MyMenu {
         doc.AddMember("ShowMenu", Settings::ShowMenu, allocator);
         doc.AddMember("OnlyCombat", Settings::OnlyCombat, allocator);
         doc.AddMember("BfcoDPA", Settings::bfcoDirectionalAttacks, allocator);
+        doc.AddMember("EnableAllNPC", Settings::EnableAllNPC, allocator);
 
         // Cria o array de dispositivos
         rapidjson::Value devicesArray(rapidjson::kArrayType);
@@ -315,6 +360,9 @@ namespace MyMenu {
         }
         if (doc.HasMember("BfcoDPA") && doc["BfcoDPA"].IsBool()) {
             Settings::bfcoDirectionalAttacks = doc["BfcoDPA"].GetBool();
+        }
+        if (doc.HasMember("EnableAllNPC") && doc["EnableAllNPC"].IsBool()) {
+            Settings::EnableAllNPC = doc["EnableAllNPC"].GetBool();
         }
 
         // Carrega as configurações dos dispositivos

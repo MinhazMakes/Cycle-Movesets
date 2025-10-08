@@ -6,9 +6,9 @@
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "ClibUtil/singleton.hpp"
+#include "Utils.h"
 
 struct FileSaveConfig;
-
 
 // Enum para os tipos de regra
 enum class RuleType { UniqueNPC, Faction, Keyword, Race, GeneralNPC, Player };
@@ -75,8 +75,9 @@ public:
     void LoadGameDataForNpcRules();
     void PopulateNpcList();
     NpcRuleMatch FindBestMovesetConfiguration(RE::Actor* actor, const std::string& categoryName);
+    
 
-    std::vector<int> GetAvailableMovesetIndices(RE::Actor* actor, const std::string& categoryName);
+    std::vector<GlobalControl::MovesetCandidate> GetAvailableMovesetIndices(RE::Actor* actor, const std::string& categoryName);
 
     std::optional<std::pair<size_t, size_t>> FindSubAnimationByPath(const std::filesystem::path& configPath);
 
@@ -85,6 +86,7 @@ public:
     
     MovesetTags GetCurrentMovesetTags(const std::string& categoryName, int stanceIndex, int movesetIndex);
     void SaveAllSettings();
+    void DeleteManagedUserJsonFiles();
 
 private:
     
