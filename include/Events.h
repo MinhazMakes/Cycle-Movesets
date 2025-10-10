@@ -83,6 +83,8 @@ public:
 
     void AddFullCategoryConditions(rapidjson::Value& parentArray, const WeaponCategory& category,
                                    rapidjson::Document::AllocatorType& allocator);
+
+    void ConvertAllMcoToBfco();
     
     MovesetTags GetCurrentMovesetTags(const std::string& categoryName, int stanceIndex, int movesetIndex);
     void SaveAllSettings();

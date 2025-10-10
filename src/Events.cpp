@@ -138,6 +138,32 @@ namespace MyMenu {
                 }
                 ImGui::Separator();
                 ImGui::Spacing();
+                if (ImGui::Button(LOC("convert_mco_to_bfco"))) {  // Ex: "Convert All MCO to BFCO"
+                    ImGui::OpenPopup("Confirm MCO Conversion");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(LOC("convert_mco_to_bfco_tooltip"));
+                }
+
+                // Pop-up de confirmação para a conversão
+                if (ImGui::BeginPopupModal("Confirm MCO Conversion", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text(LOC("convert_mco_confirm_text"));
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    if (ImGui::Button(LOC("confirm"), ImVec2(120, 0))) {
+                        AnimationManager::GetSingleton()->ConvertAllMcoToBfco();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SetItemDefaultFocus();
+                    ImGui::SameLine();
+                    if (ImGui::Button(LOC("cancel"), ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
                 if (ImGui::Button(LOC("delete_user_configs"))) {  // Ex: "Delete All User Configurations"
                     ImGui::OpenPopup("Confirm Deletion");
                 }

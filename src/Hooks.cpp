@@ -281,7 +281,7 @@
             {"Mace", 4.0, 0.0, false, false, {}, {}},
             {"Greatsword", 5.0, -1.0, false, false, {}, {}},
             {"Battleaxe", 6.0, -1.0, false, false, {}, {}},
-            {"Warhammer", 10.0, -1.0, false, false, {"WeapTypeWarhammer"}, {}},
+            {"Warhammer", 10.0, -1.0, false, false, {}, {}},
             // Shield
             //{"Shield", -1.0, 11.0, false, true, {}, {}},
             {"Sword & Shield", 1.0, 11.0, false, true, {}, {}},
@@ -290,7 +290,7 @@
             {"Mace & Shield", 4.0, 11.0, false, true, {}, {}},
             {"Greatsword & Shield", 5.0, 11.0, false, true, {}, {}},
             {"Battleaxe & Shield", 6.0, 11.0, false, true, {}, {}},
-            {"Warhammer & Shield", 10.0, 11.0, false, true, {"WeapTypeWarhammer"}, {}},
+            {"Warhammer & Shield", 10.0, 11.0, false, true, {}, {}},
             // Dual-Wield
             {"Dual Sword", 1.0, 1.0, true, {}, {}},
             {"Dual Dagger", 2.0, 2.0, true, {}, {}},
@@ -675,51 +675,110 @@
                     const auto& modDef = _allMods[modIdx];
                     std::string mod_name_str = modDef.name;
                     std::transform(mod_name_str.begin(), mod_name_str.end(), mod_name_str.begin(), ::tolower);
-                    if (filter_str.empty() || mod_name_str.find(filter_str) != std::string::npos) {
-                        // Se o pai passar no filtro, mostra o TreeNode
+                    bool modNameMatches = filter_str.empty() || mod_name_str.find(filter_str) != std::string::npos;
+                    std::vector<size_t> matchingSubAnimIndices;
+                    for (size_t subAnimIdx = 0; subAnimIdx < modDef.subAnimations.size(); ++subAnimIdx) {
+                        const auto& subAnimDef = modDef.subAnimations[subAnimIdx];
+                        std::string sub_anim_name_str = subAnimDef.name;
+                        std::transform(sub_anim_name_str.begin(), sub_anim_name_str.end(), sub_anim_name_str.begin(),
+                                       ::tolower);
+                        if (sub_anim_name_str.find(filter_str) != std::string::npos) {
+                            matchingSubAnimIndices.push_back(subAnimIdx);
+                        }
+                    }
+                    if (modNameMatches || !matchingSubAnimIndices.empty()) {
+                        if (!filter_str.empty() && mod_name_str.find(filter_str) != std::string::npos) {
+                            ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                        }
+
                         if (ImGui::TreeNode(modDef.name.c_str())) {
-                            // Loop interno pelos submovesets (filhos)
-                            for (size_t subAnimIdx = 0; subAnimIdx < modDef.subAnimations.size(); ++subAnimIdx) {
-                                const auto& subAnimDef = modDef.subAnimations[subAnimIdx];
+                            if (modNameMatches) {
+                                // Loop interno pelos submovesets (filhos)
+                                for (size_t subAnimIdx = 0; subAnimIdx < modDef.subAnimations.size(); ++subAnimIdx) {
+                                    const auto& subAnimDef = modDef.subAnimations[subAnimIdx];
 
-                                // NENHUM FILTRO AQUI DENTRO. Mostra todos os filhos.
+                                    // NENHUM FILTRO AQUI DENTRO. Mostra todos os filhos.
 
-                                ImGui::PushID(static_cast<int>(modIdx * 1000 + subAnimIdx));
+                                    ImGui::PushID(static_cast<int>(modIdx * 1000 + subAnimIdx));
 
-                                float button_width = 200.0f;
-                                ImVec2 content_avail;
-                                ImGui::GetContentRegionAvail(&content_avail);
+                                    float button_width = 200.0f;
+                                    ImVec2 content_avail;
+                                    ImGui::GetContentRegionAvail(&content_avail);
 
-                                if (ImGui::Button(LOC("add"))) {
-                                    SubAnimationInstance newSubInstance;
-                                    newSubInstance.sourceModIndex = modIdx;
-                                    newSubInstance.sourceSubAnimIndex = subAnimIdx;
-                                    const auto& sourceMod = _allMods[modIdx];
-                                    const auto& sourceSubAnim = sourceMod.subAnimations[subAnimIdx];
-                                    newSubInstance.sourceModName = sourceMod.name;
-                                    newSubInstance.sourceSubName = sourceSubAnim.name;
-                                    if (_modInstanceToAddTo) {
-                                        _modInstanceToAddTo->subAnimationInstances.push_back(newSubInstance);
-                                    } else if (_userMovesetToAddTo) {
-                                        _userMovesetToAddTo->subAnimations.push_back(newSubInstance);
-                                    } else if (_stanceToAddTo) {
-                                        CreatorSubAnimationInstance newInstance;
-                                        newInstance.sourceDef = &subAnimDef;
-                                        strcpy_s(newInstance.editedName.data(), newInstance.editedName.size(),
-                                                 subAnimDef.name.c_str());
-                                        PopulateHkxFiles(newInstance);
-                                        _stanceToAddTo->subMovesets.push_back(newInstance);
+                                    if (ImGui::Button(LOC("add"))) {
+                                        SubAnimationInstance newSubInstance;
+                                        newSubInstance.sourceModIndex = modIdx;
+                                        newSubInstance.sourceSubAnimIndex = subAnimIdx;
+                                        const auto& sourceMod = _allMods[modIdx];
+                                        const auto& sourceSubAnim = sourceMod.subAnimations[subAnimIdx];
+                                        newSubInstance.sourceModName = sourceMod.name;
+                                        newSubInstance.sourceSubName = sourceSubAnim.name;
+                                        if (_modInstanceToAddTo) {
+                                            _modInstanceToAddTo->subAnimationInstances.push_back(newSubInstance);
+                                        } else if (_userMovesetToAddTo) {
+                                            _userMovesetToAddTo->subAnimations.push_back(newSubInstance);
+                                        } else if (_stanceToAddTo) {
+                                            CreatorSubAnimationInstance newInstance;
+                                            newInstance.sourceDef = &subAnimDef;
+                                            strcpy_s(newInstance.editedName.data(), newInstance.editedName.size(),
+                                                     subAnimDef.name.c_str());
+                                            PopulateHkxFiles(newInstance);
+                                            _stanceToAddTo->subMovesets.push_back(newInstance);
+                                        }
                                     }
-                                }
 
-                                if (content_avail.x > button_width) {
-                                    ImGui::SameLine(button_width + 40);
-                                } else {
-                                    ImGui::SameLine();
-                                }
+                                    if (content_avail.x > button_width) {
+                                        ImGui::SameLine(button_width + 40);
+                                    } else {
+                                        ImGui::SameLine();
+                                    }
 
-                                ImGui::Text("%s", subAnimDef.name.c_str());
-                                ImGui::PopID();
+                                    ImGui::Text("%s", subAnimDef.name.c_str());
+                                    ImGui::PopID();
+                                }
+                            } else {
+                                for (size_t subAnimIdx : matchingSubAnimIndices) {
+                                    const auto& subAnimDef = modDef.subAnimations[subAnimIdx];
+
+                                    // NENHUM FILTRO AQUI DENTRO. Mostra todos os filhos.
+
+                                    ImGui::PushID(static_cast<int>(modIdx * 1000 + subAnimIdx));
+
+                                    float button_width = 200.0f;
+                                    ImVec2 content_avail;
+                                    ImGui::GetContentRegionAvail(&content_avail);
+
+                                    if (ImGui::Button(LOC("add"))) {
+                                        SubAnimationInstance newSubInstance;
+                                        newSubInstance.sourceModIndex = modIdx;
+                                        newSubInstance.sourceSubAnimIndex = subAnimIdx;
+                                        const auto& sourceMod = _allMods[modIdx];
+                                        const auto& sourceSubAnim = sourceMod.subAnimations[subAnimIdx];
+                                        newSubInstance.sourceModName = sourceMod.name;
+                                        newSubInstance.sourceSubName = sourceSubAnim.name;
+                                        if (_modInstanceToAddTo) {
+                                            _modInstanceToAddTo->subAnimationInstances.push_back(newSubInstance);
+                                        } else if (_userMovesetToAddTo) {
+                                            _userMovesetToAddTo->subAnimations.push_back(newSubInstance);
+                                        } else if (_stanceToAddTo) {
+                                            CreatorSubAnimationInstance newInstance;
+                                            newInstance.sourceDef = &subAnimDef;
+                                            strcpy_s(newInstance.editedName.data(), newInstance.editedName.size(),
+                                                     subAnimDef.name.c_str());
+                                            PopulateHkxFiles(newInstance);
+                                            _stanceToAddTo->subMovesets.push_back(newInstance);
+                                        }
+                                    }
+
+                                    if (content_avail.x > button_width) {
+                                        ImGui::SameLine(button_width + 40);
+                                    } else {
+                                        ImGui::SameLine();
+                                    }
+
+                                    ImGui::Text("%s", subAnimDef.name.c_str());
+                                    ImGui::PopID();
+                                }
                             }
                             ImGui::TreePop();
                         }
@@ -2796,6 +2855,12 @@ void AnimationManager::LoadCycleMovesets() {
         for (auto& pair : _generalNpcRule.categories) {
             for (auto& instance : pair.second.instances) instance.modInstances.clear();
         }
+        _generalNpcRule.type = RuleType::GeneralNPC;
+        _generalNpcRule.displayName = "NPCs (General)";
+        _generalNpcRule.identifier = "GeneralNPC";  // Identificador único
+        _generalNpcRule.pluginName = "CMF Rule";    // Um nome de plugin placeholder
+        _generalNpcRule.formID = 0xFFFFFFFF;        // Um ID sentinela que não conflita com FormIDs reais
+        // --- FIM DA CORREÇÃO ---
         _npcRules.clear();
 
         
@@ -5181,7 +5246,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         };
 
         if (Settings::EnableAllNPC) {
-            SKSE::log::info("[GetAvailableIndices] Modo 'EnableAllNPC' ativo. Combinando todas as regras aplicáveis.");
+            //SKSE::log::info("[GetAvailableIndices] Modo 'EnableAllNPC' ativo. Combinando todas as regras aplicáveis.");
 
             std::vector<ModInstance> combinedModInstances;
             int highestPriority = -1;  // Começa com -1 para garantir que a prioridade 0 (General) seja pega corretamente
@@ -5269,4 +5334,69 @@ void AnimationManager::LoadGameDataForNpcRules() {
         if (category.isShieldCategory && !category.isCustom) {
             AddShieldCategoryExclusions(parentArray, allocator);
         }
+    }
+
+    void AnimationManager::ConvertAllMcoToBfco() {
+        SKSE::log::info("Iniciando conversão global de MCO para BFCO...");
+        int totalFilesRenamed = 0;
+
+        const std::vector<std::filesystem::path> rootPaths = {
+            "Data/meshes/actors/character/animations/OpenAnimationReplacer",
+            "Data/meshes/actors/character/animations/DynamicAnimationReplacer/_CustomConditions"};
+
+        // Função interna que renomeia arquivos em um único diretório
+        auto convertInDirectory = [&](const std::filesystem::path& dirPath) {
+            int filesRenamedInDir = 0;
+            try {
+                for (const auto& fileEntry : std::filesystem::directory_iterator(dirPath)) {
+                    if (fileEntry.is_regular_file()) {
+                        std::string filename = fileEntry.path().filename().string();
+                        std::string lower_filename = filename;
+                        std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+
+                        if (lower_filename.rfind("mco_", 0) == 0) {
+                            std::string newFilename = filename;
+                            newFilename.replace(0, 4, "BFCO_");
+                            std::filesystem::path newFilePath = dirPath / newFilename;
+                            try {
+                                std::filesystem::rename(fileEntry.path(), newFilePath);
+                                filesRenamedInDir++;
+                            } catch (const std::filesystem::filesystem_error& e) {
+                                SKSE::log::error("Falha ao renomear {} para {}. Erro: {}", fileEntry.path().string(),
+                                                 newFilePath.string(), e.what());
+                            }
+                        }
+                    }
+                }
+            } catch (const std::filesystem::filesystem_error& e) {
+                SKSE::log::error("Erro de filesystem ao iterar na pasta {}: {}", dirPath.string(), e.what());
+            }
+
+            if (filesRenamedInDir > 0) {
+                SKSE::log::info("{} arquivos renomeados em {}.", filesRenamedInDir, dirPath.string());
+                totalFilesRenamed += filesRenamedInDir;
+            }
+        };
+
+        // Itera pelas pastas raiz
+        for (const auto& rootPath : rootPaths) {
+            if (!std::filesystem::exists(rootPath) || !std::filesystem::is_directory(rootPath)) {
+                continue;
+            }
+            try {
+                // Itera recursivamente por todas as subpastas
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+                    if (entry.is_directory()) {
+                        convertInDirectory(entry.path());
+                    }
+                }
+            } catch (const std::filesystem::filesystem_error& e) {
+                SKSE::log::error("Erro de filesystem durante a varredura do diretório {}: {}", rootPath.string(),
+                                 e.what());
+            }
+        }
+
+        SKSE::log::info("Conversão global concluída. Total de {} arquivos renomeados.", totalFilesRenamed);
+        RE::DebugNotification(std::format("{} MCO files were converted to BFCO.", totalFilesRenamed).c_str());
     }

@@ -707,7 +707,7 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
 
 RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
     const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) {
-
+    auto player = RE::PlayerCharacter::GetSingleton();
      // --- LOG DE DIAGNÓSTICO ---
     // Apenas loga se o timer deveria estar rodando, para não poluir o log 100% do tempo
     if (g_comboState.isTimerRunning) {
@@ -745,6 +745,33 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
                 TriggerSmartRandomNumber(std::string(eventName));
             }
         }
+
+        //if (eventName == "HitFrame") {
+        //    SKSE::log::info("Evento 'HitFrame' recebido do jogador!");
+        //    // Coloque aqui a sua lógica para o HitFrame...
+
+        //} else if (eventName == "Bfco_AttackStartFX") {
+        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", true);
+        //    player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
+        //    player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 0);
+        //    SKSE::log::info("Evento 'Bfco_AttackStartFX' recebido. Abrindo a janela de combo...");
+        //    // Ex: GetGraphVariable("BFCO_IsInComboWindow")->SetBool(true);
+
+        //} else if (eventName == "MCO_PowerWinClose" || eventName == "MCO_WinClose") {
+        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", false);
+        //    //player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
+        //    //player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
+        //    SKSE::log::info("Evento 'BFCO_IsPlayerInputOK' recebido. Fechando a janela de combo...");
+
+        //}else if (eventName == "MCO_PowerWinOpen" || eventName == "MCO_WinOpen") {
+        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", true);
+        //    player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
+        //    //player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
+        //    //player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
+        //    SKSE::log::info("Evento 'BFCO_IsPlayerInputOK' recebido. Fechando a janela de combo...");
+
+        //}
+
     }
     return RE::BSEventNotifyControl::kContinue;
 }
@@ -807,7 +834,7 @@ RE::BSEventNotifyControl GlobalControl::NpcCycleSink::ProcessEvent(const RE::BSA
             //SKSE::log::info("[UpdateHandler] Combo do ator {:08X} expirou.", formID);
             // Adicionamos a lógica para chamar a função para o ator específico
             // Usando SKSE::GetTaskInterface() ainda é uma boa prática
-            SKSE::GetTaskInterface()->AddTask([actor]() { NPCrandomNumber(actor, "Fim de Combo"); });
+            //SKSE::GetTaskInterface()->AddTask([actor]() { NPCrandomNumber(actor, "Fim de Combo"); });
         }
     }
     return RE::BSEventNotifyControl::kContinue;
