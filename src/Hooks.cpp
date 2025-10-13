@@ -313,9 +313,12 @@ std::string PathToUTF8(const std::filesystem::path& path) {
             _categories[def.name].leftHandKeywords = def.leftHandKeywords;
             _categories[def.name].isCustom = false;
             _categories[def.name].baseCategoryName = "Base";
+            _categories[def.name].instances.resize(4);
+            _categories[def.name].stanceNames.resize(4);
+            _categories[def.name].stanceNameBuffers.resize(4);
 
             // --- NOVO: Inicializa os nomes e buffers das stances ---
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < _categories[def.name].stanceNames.size(); ++i) {
                 std::string defaultName = std::format("Stance {}", i + 1);
                 _categories[def.name].stanceNames[i] = defaultName;
                 strcpy_s(_categories[def.name].stanceNameBuffers[i].data(),
@@ -1049,8 +1052,19 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
         ImGui::PushID(category.name.c_str());
         if (ImGui::CollapsingHeader(category.name.c_str())) {
             ImGui::BeginGroup();
+            if (ImGui::Button("+ Add Stance")) {
+                // Adiciona uma nova stance no final
+                category.instances.emplace_back();
+                int newStanceNum = category.stanceNames.size() + 1;
+                category.stanceNames.push_back(std::format("Stance {}", newStanceNum));
+
+                std::array<char, 64> newBuffer;
+                strcpy_s(newBuffer.data(), newBuffer.size(), std::format("Stance {}", newStanceNum).c_str());
+                category.stanceNameBuffers.push_back(newBuffer);
+            }
+            ImGui::Separator();
             if (ImGui::BeginTabBar(std::string("StanceTabs_" + category.name).c_str())) {
-                for (int i = 0; i < 4; ++i) {
+                for (int i = 0; i < category.instances.size(); ++i) {
                     const char* currentStanceName = category.stanceNameBuffers[i].data();
                     bool tab_open = ImGui::BeginTabItem(currentStanceName);
                     if (tab_open) {
@@ -1091,6 +1105,37 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                             _modInstanceToAddTo = nullptr;
                         }
                         ImGui::Separator();
+
+                        // Só permite remover se houver mais de uma stance
+                        if (category.instances.size() > 1) {
+                            if (ImGui::Button("Remove This Stance")) {
+                                // Abre um pop-up de confirmação para segurança
+                                ImGui::OpenPopup("Confirm Stance Deletion");
+                            }
+                        }
+
+                        // Pop-up de confirmação
+                        if (ImGui::BeginPopupModal("Confirm Stance Deletion", NULL,
+                                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+                            ImGui::Text(
+                                "Are you sure you want to delete this stance?\nAll movesets inside it will be lost.");
+                            if (ImGui::Button("Yes, Delete It")) {
+                                category.instances.erase(category.instances.begin() + i);
+                                category.stanceNames.erase(category.stanceNames.begin() + i);
+                                category.stanceNameBuffers.erase(category.stanceNameBuffers.begin() + i);
+                                ImGui::CloseCurrentPopup();
+                                ImGui::EndTabItem();
+                                ImGui::EndTabBar();
+                                ImGui::EndGroup();
+                                ImGui::PopID();
+                                return;
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Cancel")) {
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::EndPopup();
+                        }
 
                         int modInstanceToRemove = -1;
                         for (size_t mod_i = 0; mod_i < instance.modInstances.size(); ++mod_i) {
@@ -3313,12 +3358,16 @@ void AnimationManager::LoadCycleMovesets() {
 
     // Função para buscar o nome da stance
     std::string AnimationManager::GetStanceName(const std::string& categoryName, int stanceIndex) {
-        if (stanceIndex < 0 || stanceIndex >= 4) {
-            return "Stance Inválida";
-        }
         auto it = _categories.find(categoryName);
         if (it != _categories.end()) {
-            return it->second.stanceNames[stanceIndex];
+            const auto& category = it->second;
+            // --- CORREÇÃO AQUI ---
+            // ANTES: if (stanceIndex < 0 || stanceIndex >= 4)
+            // DEPOIS: Verifica contra o tamanho real do vetor de nomes
+            if (stanceIndex < 0 || stanceIndex >= category.stanceNames.size()) {
+                return "Stance Inválida";
+            }
+            return category.stanceNames[stanceIndex];
         }
         return std::to_string(stanceIndex + 1);  // Fallback
     }
@@ -3338,7 +3387,7 @@ void AnimationManager::LoadCycleMovesets() {
         }
 
         const WeaponCategory& category = cat_it->second;
-        if (stanceIndex < 0 || stanceIndex >= 4) {
+        if (stanceIndex < 0 || stanceIndex >= category.instances.size()) {
             return {false, false};
         }
 
@@ -3396,7 +3445,7 @@ void AnimationManager::LoadCycleMovesets() {
         }
 
         WeaponCategory& category = cat_it->second;
-        if (stanceIndex < 0 || stanceIndex >= 4) {
+        if (stanceIndex < 0 || stanceIndex >= category.instances.size()) {
             return "Stance inválida";
         }
 
@@ -3550,13 +3599,24 @@ void AnimationManager::LoadCycleMovesets() {
             }
 
             const auto& stanceNamesArray = doc.GetArray();
-            for (rapidjson::SizeType i = 0; i < stanceNamesArray.Size() && i < 4; ++i) {
-                if (stanceNamesArray[i].IsString()) {
+            size_t numStances = stanceNamesArray.Size();
+            if (numStances == 0) numStances = 4;  // Garante um mínimo de 4 se o arquivo estiver vazio
+
+            category.instances.resize(numStances);
+            category.stanceNames.resize(numStances);
+            category.stanceNameBuffers.resize(numStances);
+
+            // O loop agora itera sobre o tamanho lido do arquivo
+            for (rapidjson::SizeType i = 0; i < numStances; ++i) {
+                if (i < stanceNamesArray.Size() && stanceNamesArray[i].IsString()) {
                     category.stanceNames[i] = stanceNamesArray[i].GetString();
-                    // Atualiza o buffer do ImGui também para a UI refletir a mudança
-                    strcpy_s(category.stanceNameBuffers[i].data(), category.stanceNameBuffers[i].size(),
-                             category.stanceNames[i].c_str());
+                } else {
+                    // Se o arquivo tiver menos nomes que o esperado, preenche com o padrão
+                    category.stanceNames[i] = std::format("Stance {}", i + 1);
                 }
+                // Atualiza o buffer da UI
+                strcpy_s(category.stanceNameBuffers[i].data(), category.stanceNameBuffers[i].size(),
+                         category.stanceNames[i].c_str());
             }
         }
 

@@ -375,13 +375,16 @@ std::span<const SkyPromptAPI::Prompt> GlobalControl::StancesChangesSink::GetProm
     return prompts; }
 
 void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
-    
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    const auto& category = AnimationManager::GetSingleton()->GetCategories().at(categoryName);
+    const int numStances = category.instances.size();
+
     switch (event.type) {
         case SkyPromptAPI::kAccepted:
             if (event.prompt.eventID == 2) {
                 g_currentStance -= 1;
                 if (g_currentStance < 1) {
-                    g_currentStance = 4;  // Vai para o último
+                    g_currentStance = numStances;  // Vai para o último
                 }
                 UpdatePowerAttackGlobals();
                 UpdateSkyPromptTexts();
@@ -393,7 +396,7 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
             }
             if (event.prompt.eventID == 3) {
                 g_currentStance += 1;
-                if (g_currentStance > 4) {
+                if (g_currentStance > numStances) {
                     g_currentStance = 1;  // Volta para o primeiro
                 }
                 UpdatePowerAttackGlobals();
@@ -1004,44 +1007,46 @@ void GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants() {
 
 void GlobalControl::UpdateSkyPromptTexts() {
     auto animManager = AnimationManager::GetSingleton();
-    std::string category = GetCurrentWeaponCategoryName();
-
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    auto categoryIt = animManager->GetCategories().find(categoryName);
+    const auto& category = categoryIt->second;
+    const int numStances = category.stanceNames.size();
     // --- LÓGICA PARA STANCES  ---
     if (g_currentStance == 0) {
         // Caso especial: Nenhuma stance ativa.
         StanceText = "Stances";  // Define um texto padrão.
         // 'Next' aponta para a primeira stance (índice 0).
-        StanceNextText = animManager->GetStanceName(category, 0);
+        StanceNextText = animManager->GetStanceName(categoryName, 0);
         // 'Back' aponta para a última stance (índice 3).
-        StanceBackText = animManager->GetStanceName(category, 3);
+        StanceBackText = animManager->GetStanceName(categoryName, numStances - 1);
     } else {
         // Lógica original para quando uma stance está ativa (1 a 4).
         int currentStanceIndex = g_currentStance - 1;  // Converte para índice 0-3
-        int nextStanceIndex = (currentStanceIndex + 1) % 4;
-        int backStanceIndex = (currentStanceIndex - 1 + 4) % 4;
-        StanceText = animManager->GetStanceName(category, currentStanceIndex);
-        StanceNextText = animManager->GetStanceName(category, nextStanceIndex);
-        StanceBackText = animManager->GetStanceName(category, backStanceIndex);
+        int nextStanceIndex = (currentStanceIndex + 1) >= numStances ? 0 : currentStanceIndex + 1;
+        int backStanceIndex = (currentStanceIndex - 1) < 0 ? numStances - 1 : currentStanceIndex - 1;
+        StanceText = animManager->GetStanceName(categoryName, currentStanceIndex);
+        StanceNextText = animManager->GetStanceName(categoryName, nextStanceIndex);
+        StanceBackText = animManager->GetStanceName(categoryName, backStanceIndex);
     }
     int validStanceIndexForMoveset = g_currentStance - 1;
 
     // --- LÓGICA PARA MOVESETS  ---
-    int maxMovesets = animManager->GetMaxMovesetsFor(category, validStanceIndexForMoveset);
+    int maxMovesets = animManager->GetMaxMovesetsFor(categoryName, validStanceIndexForMoveset);
     int currentMovesetIndex = g_currentMoveset;  // 1-N
     if (maxMovesets > 0) {
         int dirState = InputListener::GetDirectionalState();
         //SKSE::log::info("[UpdateSkyPromptTexts] Chamando GetCurrentMovesetName com dirState: {}", dirState);
         std::string currentMovesetName =
-            animManager->GetCurrentMovesetName(category, validStanceIndexForMoveset, currentMovesetIndex, dirState);
+            animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, currentMovesetIndex, dirState);
         MovesetText = std::format("{} ({}/{})", currentMovesetName, currentMovesetIndex, maxMovesets);
 
         if (maxMovesets > 1) {
             int nextMovesetIndex = (currentMovesetIndex % maxMovesets) + 1;
             int backMovesetIndex = (currentMovesetIndex - 2 + maxMovesets) % maxMovesets + 1;
             MovesetNextText =
-                animManager->GetCurrentMovesetName(category, validStanceIndexForMoveset, nextMovesetIndex, 0);
+                animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, nextMovesetIndex, 0);
             MovesetBackText =
-                animManager->GetCurrentMovesetName(category, validStanceIndexForMoveset, backMovesetIndex, 0);
+                animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, backMovesetIndex, 0);
         } else {
             MovesetNextText = "Back";
             MovesetBackText = "Next";

@@ -82,12 +82,12 @@ struct WeaponCategory {
     bool isShieldCategory = false;
     std::vector<std::string> keywords;
     std::vector<std::string> leftHandKeywords;
-    std::array<CategoryInstance, 4> instances;
+    std::vector<CategoryInstance> instances;
     // --- NOVO ---
     // Armazena os nomes customizados das stances
-    std::array<std::string, 4> stanceNames;
+    std::vector<std::string> stanceNames;
     // Buffer para edição no ImGui (evita problemas com std::string)
-    std::array<std::array<char, 64>, 4> stanceNameBuffers;
+    std::vector<std::array<char, 64>> stanceNameBuffers;
 
     bool isCustom = false;
     std::string baseCategoryName;
