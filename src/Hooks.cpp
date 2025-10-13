@@ -402,11 +402,10 @@ std::string PathToUTF8(const std::filesystem::path& path) {
             AnimationModDef modDef;
             modDef.name = doc["name"].GetString();
             modDef.author = doc["author"].GetString();
-            for (const auto& subEntry : std::filesystem::recursive_directory_iterator(modPath)) {
+            for (const auto& subEntry : std::filesystem::directory_iterator(modPath)) {
                 if (subEntry.is_directory() && std::filesystem::exists(subEntry.path() / "config.json")) {
-                    if (std::filesystem::equivalent(modPath, subEntry.path())) continue;
                     SubAnimationDef subAnimDef;
-                    subAnimDef.name = subEntry.path().filename().string();
+                    subAnimDef.name = PathToUTF8(subEntry.path().filename());
                     subAnimDef.path = subEntry.path() / "config.json";
                     ScanSubAnimationFolderForTags(subEntry.path(), subAnimDef);
                     modDef.subAnimations.push_back(subAnimDef);
@@ -793,10 +792,10 @@ std::string PathToUTF8(const std::filesystem::path& path) {
                 DrawAnimationManager();  // Chama a UI da primeira aba
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(LOC("tab_moveset_creator"))) {
-                DrawUserMovesetCreator();  // Chama a nova UI
-                ImGui::EndTabItem();
-            }
+            //if (ImGui::BeginTabItem(LOC("tab_moveset_creator"))) {
+            //    DrawUserMovesetCreator();  // Chama a nova UI
+            //    ImGui::EndTabItem();
+            //}
             //if (ImGui::BeginTabItem(LOC("tab_user_movesets"))) {
             //    DrawUserMovesetManager();  // Chama a UI da segunda aba
             //    ImGui::EndTabItem();
@@ -1004,7 +1003,6 @@ std::string PathToUTF8(const std::filesystem::path& path) {
     }
 
     int AnimationManager::GetMaxMovesetsFor(const std::string& category, int stanceIndex) { 
-    
         auto it = _maxMovesetsPerCategory.find(category);
         if (it != _maxMovesetsPerCategory.end()) {
             const auto& counts = it->second;
@@ -2966,12 +2964,42 @@ void AnimationManager::LoadCycleMovesets() {
                             continue;
 
                         int stanceIndex = stanceJson["index"].GetInt();
-                        if (stanceIndex < 1 || stanceIndex > 4) continue;
+                        if (stanceIndex < 1) continue;  // Índices menores que 1 são sempre inválidos
+
+                        // --- INÍCIO DA CORREÇÃO ---
+                        // Verifica se o índice da stance está fora dos limites atuais do vetor
+                        if (stanceIndex > categoryIt->second.instances.size()) {
+                            // Se estiver, redimensiona os vetores para acomodar a nova stance (e as intermediárias)
+                            size_t newSize = stanceIndex;
+                            SKSE::log::info(
+                                "Stance com índice {} encontrado para a categoria '{}'. Redimensionando de {} para {}.",
+                                stanceIndex, categoryName, categoryIt->second.instances.size(), newSize);
+
+                            categoryIt->second.instances.resize(newSize);
+                            categoryIt->second.stanceNames.resize(newSize);
+                            categoryIt->second.stanceNameBuffers.resize(newSize);
+
+                            // Preenche os nomes e buffers das novas stances criadas com valores padrão
+                            for (size_t i = 0; i < newSize; ++i) {
+                                if (categoryIt->second.stanceNames[i].empty()) {  // Preenche apenas se estiver vazio
+                                    std::string defaultName = std::format("Stance {}", i + 1);
+                                    categoryIt->second.stanceNames[i] = defaultName;
+                                    strcpy_s(categoryIt->second.stanceNameBuffers[i].data(),
+                                             categoryIt->second.stanceNameBuffers[i].size(), defaultName.c_str());
+                                }
+                            }
+                        }
 
                         CategoryInstance& targetInstance = categoryIt->second.instances[stanceIndex - 1];
                         std::string movesetName = stanceJson["name"].GetString();
                         auto modIdxOpt = FindModIndexByName(movesetName);
-                        if (!modIdxOpt) continue;
+                        if (!modIdxOpt) {
+                            SKSE::log::warn(
+                                "Moveset com o nome '{}' não encontrado na biblioteca de animações. Verifique se o "
+                                "nome no User_CycleMoveset.json corresponde ao nome no config.json do mod.",
+                                movesetName);
+                            continue;  // Pula este moveset
+                        }
 
                         ModInstance* modInstancePtr = nullptr;
                         int hp = stanceJson.HasMember("hp") ? stanceJson["hp"].GetInt() : 100;
@@ -3008,7 +3036,7 @@ void AnimationManager::LoadCycleMovesets() {
                             std::string configPathStr = animJson["sourceConfigPath"].GetString();
                             if (configPathStr.empty()) continue;
 
-                            auto indicesOpt = FindSubAnimationByPath(configPathStr);
+                            auto indicesOpt = FindSubAnimationByPath(std::filesystem::u8path(configPathStr));
                             if (!indicesOpt) {
                                 SKSE::log::warn(
                                     "Não foi possível encontrar a animação para o config/path: {}. Pode ter sido "
@@ -5356,13 +5384,21 @@ void AnimationManager::LoadGameDataForNpcRules() {
         for (size_t modIdx = 0; modIdx < _allMods.size(); ++modIdx) {
             const auto& mod = _allMods[modIdx];
             for (size_t subIdx = 0; subIdx < mod.subAnimations.size(); ++subIdx) {
-                // Compara os caminhos canônicos para garantir consistência (ignora diferenças como / vs \)
-                if (std::filesystem::equivalent(mod.subAnimations[subIdx].path, configPath)) {
-                    return std::make_pair(modIdx, subIdx);
+                try {
+                    // A comparação com equivalent agora deve ser segura
+                    if (std::filesystem::exists(mod.subAnimations[subIdx].path) &&
+                        std::filesystem::exists(configPath) &&
+                        std::filesystem::equivalent(mod.subAnimations[subIdx].path, configPath)) {
+                        return std::make_pair(modIdx, subIdx);
+                    }
+                } catch (const std::filesystem::filesystem_error& e) {
+                    SKSE::log::error("Erro de Filesystem ao comparar caminhos: '{}' e '{}'. Erro: {}",
+                                     PathToUTF8(mod.subAnimations[subIdx].path), PathToUTF8(configPath), e.what());
+                    // Continua a procurar em vez de crashar
                 }
             }
         }
-        return std::nullopt;  // Não encontrado
+        return std::nullopt;
     }
 
     void AnimationManager::AddFullCategoryConditions(rapidjson::Value& parentArray, const WeaponCategory& category,
@@ -5471,7 +5507,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
     // Converte um objeto JSON para a sua struct SubAnimationDef
     void AnimationManager::FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef) {
         subAnimDef.name = json["name"].GetString();
-        subAnimDef.path = json["path"].GetString();
+        subAnimDef.path = std::filesystem::u8path(json["path"].GetString());
         subAnimDef.attackCount = json["attackCount"].GetInt();
         subAnimDef.powerAttackCount = json["powerAttackCount"].GetInt();
         subAnimDef.hasIdle = json["hasIdle"].GetBool();

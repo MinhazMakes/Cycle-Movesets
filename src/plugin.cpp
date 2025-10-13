@@ -127,7 +127,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
 
     SetupLog();
     logger::info("Plugin loaded");
-    AnimationManager::GetSingleton()->ScanAnimationMods();
+    
     //AnimationManager::GetSingleton()->SaveAllSettings();
     SKSE::Init(skse);
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
@@ -138,7 +138,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
         eventSource->AddEventSink(GlobalControl::ActionEventHandler::GetSingleton());
         SKSE::log::info("Ouvinte de eventos de acao registrado com sucesso!");
     }
-
+    AnimationManager::GetSingleton()->ScanAnimationMods();
     UI::RegisterMenu();
     
     return true;
