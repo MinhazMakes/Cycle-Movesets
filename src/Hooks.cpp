@@ -2676,32 +2676,42 @@ void AnimationManager::UpdateMaxMovesetCache() {
     //    parentArray.PushBack(mainAndBlock, allocator);
     //}
 
-    void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArray,
+void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArray,
                                                          const WeaponCategory* currentCategory, bool isLeftHand,
                                                          rapidjson::Document::AllocatorType& allocator) {
-        // 1. Coleta todas as keywords concorrentes primeiro
-        std::vector<std::string> competingKeywords;
+        // --- CORREÇÃO: Usar um std::set para garantir que cada keyword seja única ---
+        std::set<std::string> competingKeywords;
+
+        // 1. Coleta todas as keywords de categorias concorrentes
         for (const auto& pair : _categories) {
             const WeaponCategory& otherCategory = pair.second;
+
+            // Uma categoria é "concorrente" se NÃO for a atual, mas tiver o MESMO tipo de arma base
             if (otherCategory.name != currentCategory->name &&
-                otherCategory.equippedTypeValue == currentCategory->equippedTypeValue && !otherCategory.keywords.empty()) {
-                // Adiciona todas as keywords da categoria concorrente à lista de exclusão
-                competingKeywords.insert(competingKeywords.end(), otherCategory.keywords.begin(),
-                                         otherCategory.keywords.end());
+                otherCategory.equippedTypeValue == currentCategory->equippedTypeValue) {
+                // Escolhe qual lista de keywords usar (direita ou esquerda) com base no contexto
+                const auto& keywordsToExclude = isLeftHand ? otherCategory.leftHandKeywords : otherCategory.keywords;
+
+                if (!keywordsToExclude.empty()) {
+                    // Insere as keywords no set. Duplicatas serão ignoradas automaticamente.
+                    competingKeywords.insert(keywordsToExclude.begin(), keywordsToExclude.end());
+                }
             }
         }
 
+        // Se não houver keywords concorrentes, não há nada a fazer.
         if (competingKeywords.empty()) {
             return;
         }
 
+        // 2. Cria um único bloco AND para conter todas as exclusões (NOT keyword1 AND NOT keyword2 ...)
         rapidjson::Value exclusionAndBlock(rapidjson::kObjectType);
         exclusionAndBlock.AddMember("condition", "AND", allocator);
         exclusionAndBlock.AddMember("comment", "Exclude competing weapon keywords", allocator);
         rapidjson::Value innerExclusionConditions(rapidjson::kArrayType);
 
+        // 3. Itera sobre o SET de keywords únicas e adiciona a condição negada para cada uma
         for (const auto& keyword : competingKeywords) {
-            // A lógica interna permanece a mesma, pois AddKeywordCondition já lida com uma keyword por vez
             AddKeywordCondition(innerExclusionConditions, keyword, isLeftHand, true, allocator);
         }
 
@@ -3023,18 +3033,25 @@ void AnimationManager::LoadCycleMovesets() {
     try {
         // Limpa o estado atual para garantir um carregamento limpo
         for (auto& pair : _categories) {
-            for (auto& instance : pair.second.instances) instance.modInstances.clear();
+            for (auto& instance : pair.second.instances) {
+                instance.modInstances.clear();
+                instance.perkList.clear();  // Limpa perks do player para evitar contaminação inicial
+            }
         }
+
+        // Inicializa a regra geral de NPCs
         _generalNpcRule.categories = _categories;
         for (auto& pair : _generalNpcRule.categories) {
-            for (auto& instance : pair.second.instances) instance.modInstances.clear();
+            for (auto& instance : pair.second.instances) {
+                instance.modInstances.clear();
+                instance.perkList.clear();  // <-- CORREÇÃO #1: Limpa os perks copiados
+            }
         }
         _generalNpcRule.type = RuleType::GeneralNPC;
         _generalNpcRule.displayName = "NPCs (General)";
-        _generalNpcRule.identifier = "GeneralNPC";  // Identificador único
-        _generalNpcRule.pluginName = "CMF Rule";    // Um nome de plugin placeholder
-        _generalNpcRule.formID = 0xFFFFFFFF;        // Um ID sentinela que não conflita com FormIDs reais
-        // --- FIM DA CORREÇÃO ---
+        _generalNpcRule.identifier = "GeneralNPC";
+        _generalNpcRule.pluginName = "CMF Rule";
+        _generalNpcRule.formID = 0xFFFFFFFF;
         _npcRules.clear();
 
         
@@ -3082,7 +3099,10 @@ void AnimationManager::LoadCycleMovesets() {
                         newRule.categories = _categories;
                         for (auto& pair : newRule.categories) {
                             pair.second.ownerIsPlayer = false;
-                            for (auto& instance : pair.second.instances) instance.modInstances.clear();
+                            for (auto& instance : pair.second.instances) {
+                                instance.modInstances.clear();
+                                instance.perkList.clear();
+                            }
                         }
                         _npcRules.push_back(newRule);
                         targetCategories = &_npcRules.back().categories;
@@ -5281,7 +5301,20 @@ void AnimationManager::LoadGameDataForNpcRules() {
 
 
     // Formata o FormID para o formato de 6 dígitos que o OAR espera, removendo o índice do plugin
-    std::string FormatFormIDForOAR(RE::FormID formID) { return std::format("{:06X}", formID & 0x00FFFFFF); }
+    std::string FormatFormIDForOAR(RE::FormID formID, const std::string& pluginName) {
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        if (dataHandler) {
+            const RE::TESFile* plugin = dataHandler->LookupModByName(pluginName);
+
+            // Verifica se o plugin foi encontrado e se ele tem a flag "IsLight" (ESL)
+            if (plugin && plugin->IsLight()) {
+                // Para plugins ESL, o ID real está nos últimos 12 bits (3 dígitos hex)
+                return std::format("{:03X}", formID & 0xFFF);
+            }
+        }
+        // Para plugins normais (ESM/ESP), o ID está nos últimos 24 bits (6 dígitos hex)
+        return std::format("{:06X}", formID & 0xFFFFFF);
+    }
 
     void AnimationManager::AddIsActorBaseCondition(rapidjson::Value& conditionsArray, const std::string& plugin,
                                                    RE::FormID formID, bool negated,
@@ -5293,7 +5326,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         }
         rapidjson::Value params(rapidjson::kObjectType);
         params.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
-        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID).c_str(), allocator), allocator);
+        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
         condition.AddMember("Actor base", params, allocator);
         conditionsArray.PushBack(condition, allocator);
     }
@@ -5304,7 +5337,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         condition.AddMember("condition", "IsInFaction", allocator);
         rapidjson::Value params(rapidjson::kObjectType);
         params.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
-        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID).c_str(), allocator), allocator);
+        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
         condition.AddMember("Faction", params, allocator);
         conditionsArray.PushBack(condition, allocator);
     }
@@ -5321,7 +5354,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         // Objeto interno "form"
         rapidjson::Value formObj(rapidjson::kObjectType);
         formObj.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
-        formObj.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID).c_str(), allocator), allocator);
+        formObj.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
 
         // Adiciona o objeto "form" dentro do objeto "Keyword"
         keywordObj.AddMember("form", formObj, allocator);
@@ -5338,7 +5371,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         condition.AddMember("condition", "IsRace", allocator);
         rapidjson::Value params(rapidjson::kObjectType);
         params.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
-        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID).c_str(), allocator), allocator);
+        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
         condition.AddMember("Race", params, allocator);
         conditionsArray.PushBack(condition, allocator);
     }
@@ -5979,7 +6012,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
 
         rapidjson::Value params(rapidjson::kObjectType);
         params.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
-        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID).c_str(), allocator), allocator);
+        params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
 
         condition.AddMember("Perk", params, allocator);
         conditionsArray.PushBack(condition, allocator);
@@ -6105,15 +6138,4 @@ void AnimationManager::DrawPerkSelectorPopup() {
         }
     }
 
-    std::string AnimationManager::GetPerkNameByID(RE::FormID formID) {
-        if (formID == 0) {
-            return "None";
-        }
-        for (const auto& perk : _allPerks) {
-            if (perk.formID == formID) {
-                return perk.name;
-            }
-        }
-        return "Unknown Perk";
-    }
 

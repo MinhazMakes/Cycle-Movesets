@@ -383,7 +383,6 @@ private:
 
     void DrawPerkSelectorPopup();
 
-    std::string GetPerkNameByID(RE::FormID formID);
 
     // Funções para converter seus dados para JSON (essencial para o cache)
     void FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef);
