@@ -1016,32 +1016,7 @@ std::string PathToUTF8(const std::filesystem::path& path) {
         return 0;
     }
 
-//int AnimationManager::GetMaxMovesetsForNPC(RE::Actor* actor, const std::string& category, int stanceIndex) {
-//        // A verificação de stanceIndex é mantida por compatibilidade, embora a nova lógica não a utilize.
-//        if (stanceIndex < 0 || stanceIndex >= 4) {
-//            return 0;
-//        }
-//        if (!actor) {
-//            return 0;
-//        }
-//        // 1. Tenta encontrar o Ator no jogo a partir do FormID fornecido.
-//        // Esta é a etapa crucial de conversão.
-//        SKSE::log::info("[GetMaxMovesetsForNPC] Ator recebido. Chamando FindBestMovesetConfiguration...");
-//
-//        // 2. Chama a nossa nova função principal para fazer a busca com fallback e prioridade.
-//        NpcRuleMatch result = FindBestMovesetConfiguration(actor, category);
-//
-//        SKSE::log::info(
-//            "[GetMaxMovesetsForNPC] Resultado recebido -> Contagem: {}, Prioridade: {}. Setando variável de "
-//            "prioridade.",
-//            result.count, result.priority);
-//
-//        actor->SetGraphVariableInt("CycleMovesetNpcType", result.priority);
-//
-//        SKSE::log::info("[GetMaxMovesetsForNPC] Retornando contagem final: {}", result.count);
-//        // 4. Retorna a contagem de movesets, cumprindo o contrato original da função.
-//        return result.count;
-//    }
+
 
     const std::map<std::string, WeaponCategory>& AnimationManager::GetCategories() const { 
         return _categories; }
@@ -1068,28 +1043,24 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                     if (tab_open) {
                         category.activeInstanceIndex = i;
                         CategoryInstance& instance = category.instances[i];
-                        ImGui::Text("Required Perk: %s", GetPerkNameByID(instance.requiredPerkID).c_str());
-                        ImGui::SameLine();
-                        if (ImGui::Button("Change##StancePerk")) {
-                            _isPerkSelectorOpen = true;
+                        std::string stancePerkLabel =
+                            std::format("Stance Perks ({})##StancePerk_{}", instance.perkList.size(), i);
+
+                        // --- MUDANÇA #1: LÓGICA DO BOTÃO "STANCE PERKS" ATUALIZADA ---
+                        if (ImGui::Button(stancePerkLabel.c_str())) {
+                            _perksToDisplayInPopup.clear();
+                            _inheritedPerkFormIDs.clear();
+
+                            // Perks da Stance são próprios, não herdados.
+                            _perksToDisplayInPopup = instance.perkList;
+
                             _stanceToEditPerk = &instance;
                             _movesetToEditPerk = nullptr;
                             _subMovesetToEditPerk = nullptr;
+                            _isPerkSelectorOpen = true;
                         }
-                        ImGui::SameLine();
-                        if (ImGui::Button("Clear##StancePerk")) {
-                            instance.requiredPerkID = 0;
-                            instance.requiredPerkPlugin.clear();
-                            // Propaga a limpeza para todos os filhos
-                            for (auto& modInst : instance.modInstances) {
-                                modInst.requiredPerkID = 0;
-                                modInst.requiredPerkPlugin.clear();
-                                for (auto& subInst : modInst.subAnimationInstances) {
-                                    subInst.requiredPerkID = 0;
-                                    subInst.requiredPerkPlugin.clear();
-                                }
-                            }
-                        }
+                        
+                    
                         std::map<SubAnimationInstance*, int> playlistNumbers;
                         std::map<SubAnimationInstance*, int> parentNumbersForChildren;
                         int currentPlaylistCounter = 1;
@@ -1171,33 +1142,29 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                             ImGui::SameLine();
                             ImGui::Checkbox("##modselect", &modInstance.isSelected);
                             ImGui::SameLine();
-                            ImGui::Text("Perk: %s", GetPerkNameByID(modInstance.requiredPerkID).c_str());
-                            ImGui::SameLine();
-                            if (ImGui::Button("C##MovesetPerk")) {  // Botão menor "C" para "Change"
-                                _isPerkSelectorOpen = true;
-                                _stanceToEditPerk = nullptr;
-                                _movesetToEditPerk = &modInstance;
-                                _subMovesetToEditPerk = nullptr;
-                            }
-                            ImGui::SameLine();
-                            if (ImGui::Button("X##MovesetPerk")) {  // Botão menor "X" para "Clear"
-                                modInstance.requiredPerkID = 0;
-                                modInstance.requiredPerkPlugin.clear();
-                                // Propaga a limpeza para os sub-movesets
-                                for (auto& subInst : modInstance.subAnimationInstances) {
-                                    subInst.requiredPerkID = 0;
-                                    subInst.requiredPerkPlugin.clear();
+                            std::string movesetPerkLabel =
+                                std::format("Perks ({})##MovesetPerk_{}", modInstance.perkList.size(), mod_i);
+                            if (ImGui::Button(movesetPerkLabel.c_str())) {
+                                _perksToDisplayInPopup.clear();
+                                _inheritedPerkFormIDs.clear();
+
+                                // 1. Adiciona perks herdados da Stance
+                                for (const auto& perk : instance.perkList) {
+                                    _perksToDisplayInPopup.push_back(perk);
+                                    _inheritedPerkFormIDs.insert(perk.formID);
                                 }
-                            }
-                            bool node_open = ImGui::TreeNode(sourceMod.name.c_str());
-                            ImGui::SameLine();
-                            if (ImGui::Button("Perk##Moveset")) {
-                                _isPerkSelectorOpen = true;
+                                // 2. Adiciona perks próprios do Moveset
+                                for (const auto& perk : modInstance.perkList) {
+                                    _perksToDisplayInPopup.push_back(perk);
+                                }
+
                                 _stanceToEditPerk = nullptr;
                                 _movesetToEditPerk = &modInstance;
                                 _subMovesetToEditPerk = nullptr;
+                                _isPerkSelectorOpen = true;
                             }
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set perk requirement for this moveset.");
+                            ImGui::SameLine();
+                            bool node_open = ImGui::TreeNode(sourceMod.name.c_str());
                             if (ImGui::BeginDragDropSource()) {
                                 ImGui::SetDragDropPayload("DND_MOD_INSTANCE", &mod_i, sizeof(size_t));
                                 ImGui::Text("Move moveset %s", sourceMod.name.c_str());
@@ -1236,19 +1203,35 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                                     ImGui::BeginGroup();
                                     ImGui::Checkbox("##subselect", &subInstance.isSelected);
                                     ImGui::SameLine();
-                                    std::string perkLabel = "Perk: " + GetPerkNameByID(subInstance.requiredPerkID);
-                                    ImGui::TextUnformatted(perkLabel.c_str());
-                                    ImGui::SameLine();
-                                    if (ImGui::Button("C")) {
-                                        _isPerkSelectorOpen = true;
+                                    std::string subPerkLabel = std::format("Perks ({})##SubMovesetPerk_{}",
+                                                                           subInstance.perkList.size(), sub_j);
+                                    if (ImGui::Button(subPerkLabel.c_str())) {
+                                        _perksToDisplayInPopup.clear();
+                                        _inheritedPerkFormIDs.clear();
+
+                                        // 1. Adiciona perks herdados da Stance
+                                        for (const auto& perk : instance.perkList) {
+                                            _perksToDisplayInPopup.push_back(perk);
+                                            _inheritedPerkFormIDs.insert(perk.formID);
+                                        }
+                                        // 2. Adiciona perks herdados do Moveset
+                                        for (const auto& perk : modInstance.perkList) {
+                                            // Evita adicionar o mesmo perk herdado duas vezes
+                                            if (_inheritedPerkFormIDs.find(perk.formID) ==
+                                                _inheritedPerkFormIDs.end()) {
+                                                _perksToDisplayInPopup.push_back(perk);
+                                                _inheritedPerkFormIDs.insert(perk.formID);
+                                            }
+                                        }
+                                        // 3. Adiciona perks próprios do Sub-Moveset
+                                        for (const auto& perk : subInstance.perkList) {
+                                            _perksToDisplayInPopup.push_back(perk);
+                                        }
+
                                         _stanceToEditPerk = nullptr;
                                         _movesetToEditPerk = nullptr;
                                         _subMovesetToEditPerk = &subInstance;
-                                    }
-                                    ImGui::SameLine();
-                                    if (ImGui::Button("X")) {
-                                        subInstance.requiredPerkID = 0;
-                                        subInstance.requiredPerkPlugin.clear();
+                                        _isPerkSelectorOpen = true;
                                     }
                                     ImGui::SameLine();
                                     ImGui::BeginGroup();
@@ -1970,15 +1953,11 @@ void AnimationManager::SaveAllSettings() {
                 const WeaponCategory& category = pair.second;
 
                 // --- LÓGICA CORRIGIDA: Determina quantas stances iterar ---
-                int maxStances =
-                    isNpcRule ? 1 : category.instances.size();  // NPCs usam 1 stance (índice 0), Player usa 4.
+                int maxStances = isNpcRule ? 1 : category.instances.size();  
 
                 for (int i = 0; i < maxStances; ++i) {
                     const CategoryInstance& instance = category.instances[i];
 
-                    // ========================= INÍCIO DA CORREÇÃO =========================
-                    // ETAPA 1: PRÉ-PROCESSAMENTO
-                    // Mapeia o 'order_in_playlist' de um pai para um conjunto de suas direções de filhos.
                     std::map<int, std::set<int>> childDirectionsByParentOrder;
                     int tempPlaylistParentCounter = 1;
                     int tempLastParentOrder = 0;
@@ -2009,7 +1988,6 @@ void AnimationManager::SaveAllSettings() {
                             }
                         }
                     }
-                    // =======================================================================
 
                     int playlistParentCounter = 1;
                     int lastParentOrder = 0;
@@ -2024,16 +2002,32 @@ void AnimationManager::SaveAllSettings() {
                                 _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
 
                             FileSaveConfig config;
-                            if (subInst.requiredPerkID != 0) {
-                                config.requiredPerkID = subInst.requiredPerkID;
-                                config.requiredPerkPlugin = subInst.requiredPerkPlugin;
-                            } else if (modInst.requiredPerkID != 0) {
-                                config.requiredPerkID = modInst.requiredPerkID;
-                                config.requiredPerkPlugin = modInst.requiredPerkPlugin;
-                            } else if (instance.requiredPerkID != 0) {
-                                config.requiredPerkID = instance.requiredPerkID;
-                                config.requiredPerkPlugin = instance.requiredPerkPlugin;
-                            }
+                            std::vector<PerkDef> consolidatedPerks;
+
+                            // Preenche a lista consolidada com perks da hierarquia
+                            consolidatedPerks.insert(consolidatedPerks.end(), subInst.perkList.begin(),
+                                                     subInst.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), modInst.perkList.begin(),
+                                                     modInst.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), instance.perkList.begin(),
+                                                     instance.perkList.end());
+
+                            // Remove duplicatas baseadas no FormID
+                            std::set<RE::FormID> seenPerks;
+                            consolidatedPerks.erase(std::remove_if(consolidatedPerks.begin(), consolidatedPerks.end(),
+                                                                   [&](const PerkDef& perk) {
+                                                                       if (seenPerks.count(perk.formID)) {
+                                                                           return true;
+                                                                       }
+                                                                       seenPerks.insert(perk.formID);
+                                                                       return false;
+                                                                   }),
+                                                    consolidatedPerks.end());
+
+                            // ========================= INÍCIO DA CORREÇÃO =========================
+                            // Atribui a lista de structs diretamente. Esta parte já está correta,
+                            // mas confirmamos que o tipo de 'config.perkList' é std::vector<PerkDef>.
+                            config.perkList = consolidatedPerks; 
                             if (rule) {
                                 config.ruleType = rule->type;
                                 config.formID = rule->formID;
@@ -2081,12 +2075,8 @@ void AnimationManager::SaveAllSettings() {
                             }
                             std::filesystem::path configPath;
                             if (sourceMod.name == "[DAR] Animations") {
-                                // Para DAR, o 'path' da sub-animação é o diretório.
-                                // Criamos um caminho lógico para um config.json dentro dele
-                                // para que UpdateOrCreateJson possa encontrar o diretório pai corretamente.
                                 configPath = sourceSubAnim.path / "user.json";
                             } else {
-                                // Para OAR, o path já é o arquivo config.json.
                                 configPath = sourceSubAnim.path.parent_path() / "user.json";
                             }
                             fileUpdates[configPath].push_back(config);
@@ -2303,8 +2293,11 @@ void AnimationManager::PopulatePerkList() {
                 rapidjson::Value categoryAndBlock(rapidjson::kObjectType);
                 categoryAndBlock.AddMember("condition", "AND", allocator);
                 rapidjson::Value andConditions(rapidjson::kArrayType);
-                if (!config.requiredPerkPlugin.empty() && config.requiredPerkID != 0) {
-                    AddHasPerkCondition(andConditions, config.requiredPerkPlugin, config.requiredPerkID, allocator);
+                if (!config.perkList.empty()) {
+                    for (const auto& perk : config.perkList) {
+                        // Agora 'perk' é a nossa struct. Acessamos os membros diretamente.
+                        AddHasPerkCondition(andConditions, perk.pluginName, perk.formID, allocator);
+                    }
                 }
                 // ActorBase condition
                 switch (config.ruleType) {
@@ -2742,8 +2735,48 @@ void AnimationManager::UpdateMaxMovesetCache() {
         }
     }
 
+void CreatePerkListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
+                            const std::vector<PerkDef>& perkList) {
+        if (perkList.empty()) return;
 
-void AnimationManager::SaveCycleMovesets() {
+        rapidjson::Value perkArray(rapidjson::kArrayType);
+        for (const auto& perk : perkList) {
+            rapidjson::Value perkData(rapidjson::kArrayType);
+            perkData.PushBack(rapidjson::Value(perk.pluginName.c_str(), doc.GetAllocator()), doc.GetAllocator());
+            perkData.PushBack(perk.formID, doc.GetAllocator());
+            perkData.PushBack(rapidjson::Value(perk.origin.c_str(), doc.GetAllocator()), doc.GetAllocator());
+            perkArray.PushBack(perkData, doc.GetAllocator());
+        }
+        targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
+    }
+
+void ParsePerkListJson(const rapidjson::Value& sourceObject, const std::string& keyName, CategoryInstance* stance,
+                           ModInstance* moveset, SubAnimationInstance* subMoveset) {
+        if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
+            return;
+        }
+
+        const auto& perkArray = sourceObject[keyName.c_str()].GetArray();
+        for (const auto& perkData : perkArray) {
+            if (perkData.IsArray() && perkData.Size() == 3 && perkData[0].IsString() && perkData[1].IsUint() &&
+                perkData[2].IsString()) {
+                std::string plugin = perkData[0].GetString();
+                RE::FormID formID = perkData[1].GetUint();
+                std::string origin = perkData[2].GetString();
+
+                PerkDef newPerk = {plugin, formID, origin};  // Cria a struct
+
+                if (origin == "Stance" && stance)
+                    stance->perkList.push_back(newPerk);
+                else if (origin == "Moveset" && moveset)
+                    moveset->perkList.push_back(newPerk);
+                else if (origin == "SubMoveset" && subMoveset)
+                    subMoveset->perkList.push_back(newPerk);
+            }
+        }
+    }
+
+    void AnimationManager::SaveCycleMovesets() {
         SKSE::log::info("Iniciando salvamento do estado da UI em arquivos User_CycleMoveset.json...");
 
         std::map<std::filesystem::path, std::unique_ptr<rapidjson::Document>> documents;
@@ -2776,7 +2809,10 @@ void AnimationManager::SaveCycleMovesets() {
                     
                     for (size_t mod_idx = 0; mod_idx < instance.modInstances.size(); ++mod_idx) {
                         const auto& modInst = instance.modInstances[mod_idx];
-                        if (!modInst.isSelected) continue;
+                        if (!modInst.isSelected) {
+                            continue;  // Pula movesets não selecionados ou vazios
+                        }
+
 
                         const auto& sourceMod = _allMods[modInst.sourceModIndex];
 
@@ -2846,32 +2882,7 @@ void AnimationManager::SaveCycleMovesets() {
                                 menuArray.PushBack(newCategoryObj, allocator);
                                 categoryObj = &menuArray.GetArray()[menuArray.GetArray().Size() - 1];
                             }
-                            if (instance.requiredPerkID != 0) {
-                                bool perkAlreadySaved = false;
-                                if (categoryObj->HasMember("stances_perks") &&
-                                    (*categoryObj)["stances_perks"].IsArray()) {
-                                    for (auto& savedPerk : (*categoryObj)["stances_perks"].GetArray()) {
-                                        if (savedPerk.IsObject() && savedPerk["stance_index"].GetInt() == (i + 1)) {
-                                            perkAlreadySaved = true;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (!perkAlreadySaved) {
-                                    if (!categoryObj->HasMember("stances_perks")) {
-                                        categoryObj->AddMember("stances_perks", rapidjson::kArrayType, allocator);
-                                    }
-                                    rapidjson::Value& perksArray = (*categoryObj)["stances_perks"];
-                                    rapidjson::Value stancePerkObj(rapidjson::kObjectType);
-                                    stancePerkObj.AddMember("stance_index", i + 1, allocator);
-                                    stancePerkObj.AddMember(
-                                        "plugin", rapidjson::Value(instance.requiredPerkPlugin.c_str(), allocator),
-                                        allocator);
-                                    stancePerkObj.AddMember("formID", instance.requiredPerkID, allocator);
-                                    perksArray.PushBack(stancePerkObj, allocator);
-                                }
-                            }
+                           
                             // 3. Encontra/Cria a Stance (o moveset)
                             rapidjson::Value& stancesArray = (*categoryObj)["stances"];
                             rapidjson::Value* stanceObj = nullptr;
@@ -2882,6 +2893,7 @@ void AnimationManager::SaveCycleMovesets() {
                                     break;
                                 }
                             }
+
                             if (!stanceObj) {
                                 rapidjson::Value newStanceObj(rapidjson::kObjectType);
                                 newStanceObj.AddMember("index", i + 1, allocator);
@@ -2896,10 +2908,6 @@ void AnimationManager::SaveCycleMovesets() {
                                 // <<< MUDANÇA PRINCIPAL: Usa o índice do loop (mod_idx) para definir a ordem
                                 // Adicionamos +1 porque a ordem no JSON deve começar em 1, não em 0.
                                 newStanceObj.AddMember("order", static_cast<int>(mod_idx + 1), allocator);
-                                newStanceObj.AddMember("requiredPerkID", modInst.requiredPerkID, allocator);
-                                newStanceObj.AddMember("requiredPerkPlugin",
-                                                       rapidjson::Value(modInst.requiredPerkPlugin.c_str(), allocator),
-                                                       allocator);
                                 newStanceObj.AddMember("animations", rapidjson::kArrayType, allocator);
                                 stancesArray.PushBack(newStanceObj, allocator);
                                 stanceObj = &stancesArray.GetArray()[stancesArray.GetArray().Size() - 1];
@@ -2908,6 +2916,23 @@ void AnimationManager::SaveCycleMovesets() {
                             // 4. Adiciona a Animação individual ao array "animations" da Stance
                             rapidjson::Value& animationsArray = (*stanceObj)["animations"];
                             rapidjson::Value animObj(rapidjson::kObjectType);
+                            std::vector<PerkDef> allPerksForThisAnimation;
+
+                            for (const auto& p : instance.perkList) {
+                                allPerksForThisAnimation.push_back({p.pluginName, p.formID, "Stance"});
+                            }
+                            for (const auto& p : modInst.perkList) {
+                                allPerksForThisAnimation.push_back({p.pluginName, p.formID, "Moveset"});
+                            }
+                            for (const auto& p : subInst.perkList) {
+                                allPerksForThisAnimation.push_back({p.pluginName, p.formID, "SubMoveset"});
+                            }
+
+                            if (!allPerksForThisAnimation.empty()) {
+                                CreatePerkListJson(doc, animObj, "PerkList", allPerksForThisAnimation);
+                            }
+
+                            
                             animObj.AddMember("index", animationIndexCounter++, allocator);
                             animObj.AddMember("sourceModName", rapidjson::Value(animOriginMod.name.c_str(), allocator),
                                               allocator);
@@ -2934,10 +2959,6 @@ void AnimationManager::SaveCycleMovesets() {
                             animObj.AddMember("pBackLeft", subInst.pBackLeft, allocator);
                             animObj.AddMember("pRandom", subInst.pRandom, allocator);
                             animObj.AddMember("pDodge", subInst.pDodge, allocator);
-                            animObj.AddMember("requiredPerkID", subInst.requiredPerkID, allocator);
-                            animObj.AddMember("requiredPerkPlugin",
-                                              rapidjson::Value(subInst.requiredPerkPlugin.c_str(), allocator),
-                                              allocator);
                             animationsArray.PushBack(animObj, allocator);
                         }
                     }
@@ -3079,20 +3100,7 @@ void AnimationManager::LoadCycleMovesets() {
                     std::string categoryName = categoryJson["Category"].GetString();
                     auto categoryIt = targetCategories->find(categoryName);
                     if (categoryIt == targetCategories->end()) continue;
-                    if (categoryJson.HasMember("stances_perks") && categoryJson["stances_perks"].IsArray()) {
-                        for (const auto& perkInfo : categoryJson["stances_perks"].GetArray()) {
-                            if (perkInfo.IsObject() && perkInfo.HasMember("stance_index") &&
-                                perkInfo.HasMember("formID") && perkInfo.HasMember("plugin")) {
-                                int stanceIndex = perkInfo["stance_index"].GetInt();
-                                // Garante que o índice da stance seja válido antes de tentar acessar
-                                if (stanceIndex > 0 && stanceIndex <= categoryIt->second.instances.size()) {
-                                    CategoryInstance& targetInstance = categoryIt->second.instances[stanceIndex - 1];
-                                    targetInstance.requiredPerkID = perkInfo["formID"].GetUint();
-                                    targetInstance.requiredPerkPlugin = perkInfo["plugin"].GetString();
-                                }
-                            }
-                        }
-                    }
+                   
                     for (const auto& stanceJson : categoryJson["stances"].GetArray()) {
                         if (!stanceJson.IsObject() || !stanceJson.HasMember("index") || !stanceJson.HasMember("name") ||
                             !stanceJson.HasMember("animations"))
@@ -3162,12 +3170,7 @@ void AnimationManager::LoadCycleMovesets() {
                             modInstancePtr->level = level;
                             modInstancePtr->order = order;
                         }
-                        if (stanceJson.HasMember("requiredPerkID") && stanceJson["requiredPerkID"].IsUint()) {
-                            modInstancePtr->requiredPerkID = stanceJson["requiredPerkID"].GetUint();
-                        }
-                        if (stanceJson.HasMember("requiredPerkPlugin") && stanceJson["requiredPerkPlugin"].IsString()) {
-                            modInstancePtr->requiredPerkPlugin = stanceJson["requiredPerkPlugin"].GetString();
-                        }
+
                         for (const auto& animJson : stanceJson["animations"].GetArray()) {
                             if (!animJson.IsObject() || !animJson.HasMember("sourceConfigPath") ||
                                 !animJson.HasMember("index"))
@@ -3188,6 +3191,13 @@ void AnimationManager::LoadCycleMovesets() {
                             SubAnimationInstance newSubInstance;
                             newSubInstance.sourceModIndex = indicesOpt->first;
                             newSubInstance.sourceSubAnimIndex = indicesOpt->second;
+                            targetInstance.perkList.clear();
+                            modInstancePtr->perkList.clear();
+                            if (animJson.IsObject()) {
+                                // Chama a nova função passando ponteiros para todos os níveis
+                                ParsePerkListJson(animJson, "PerkList", &targetInstance, modInstancePtr,
+                                                  &newSubInstance);
+                            }
                             if (animJson.HasMember("sourceSubName") && animJson["sourceSubName"].IsString()) {
                                 const char* savedName = animJson["sourceSubName"].GetString();
                                 const auto& originSubAnim = _allMods[newSubInstance.sourceModIndex]
@@ -3227,12 +3237,6 @@ void AnimationManager::LoadCycleMovesets() {
                                 newSubInstance.pBackLeft = animJson["pBackLeft"].GetBool();
                             if (animJson.HasMember("pRandom")) newSubInstance.pRandom = animJson["pRandom"].GetBool();
                             if (animJson.HasMember("pDodge")) newSubInstance.pDodge = animJson["pDodge"].GetBool();
-                            if (animJson.HasMember("requiredPerkID") && animJson["requiredPerkID"].IsUint()) {
-                                newSubInstance.requiredPerkID = animJson["requiredPerkID"].GetUint();
-                            }
-                            if (animJson.HasMember("requiredPerkPlugin") && animJson["requiredPerkPlugin"].IsString()) {
-                                newSubInstance.requiredPerkPlugin = animJson["requiredPerkPlugin"].GetString();
-                            }
 
                             newSubInstance.isSelected = true;  // Se está no arquivo, estava selecionada.
 
@@ -3253,119 +3257,119 @@ void AnimationManager::LoadCycleMovesets() {
         const std::filesystem::path darRootPath =
             "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
 
-        auto findAndMergeFiles = [&](const std::filesystem::path& root) {
+        auto findAndProcessFiles = [&](const std::filesystem::path& root) {
             if (!std::filesystem::exists(root)) return;
 
+            std::set<std::filesystem::path> processedFolders;
+
             for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-                if (entry.is_regular_file() &&
-                    (entry.path().filename() == "config.json" || entry.path().filename() == "user.json")) {
-                    std::filesystem::path currentFolder = entry.path().parent_path();
-                    std::vector<std::filesystem::path> filesToMerge;
-                    const std::string prefix = "User_CycleMoveset";
+                if (!entry.is_directory()) continue;
 
-                    // PASSO 1: Encontrar todos os arquivos que precisam ser unidos
-                    for (const auto& dirEntry : std::filesystem::directory_iterator(currentFolder)) {
-                        if (dirEntry.is_regular_file() && dirEntry.path().filename().string().starts_with(prefix) &&
-                            dirEntry.path().extension() == ".json") {
-                            filesToMerge.push_back(dirEntry.path());
-                        }
-                    }
+                std::filesystem::path currentFolder = entry.path();
+                if (processedFolders.count(currentFolder)) continue;
 
-                    // Se não houver arquivos 'User_*', procurar pelo 'CycleMoveset.json' de fallback
-                    if (filesToMerge.empty()) {
-                        std::filesystem::path defaultFile = currentFolder / "CycleMoveset.json";
-                        if (std::filesystem::exists(defaultFile)) {
-                            std::ifstream ifs(defaultFile);
-                            if (!ifs.is_open()) continue;
-                            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
-                            rapidjson::Document doc;
-                            doc.Parse(jsonContent.c_str());
-                            if (!doc.HasParseError()) {
-                                processJsonDocument(doc);
+                if (std::filesystem::exists(currentFolder / "config.json") ||
+                    std::filesystem::exists(currentFolder / "user.json")) {
+                    processedFolders.insert(currentFolder);
+
+                    // --- PASSO 1: FUSÃO CONDICIONAL ---
+                    // Só executa se o cache for inválido. A única tarefa é criar/atualizar o User_CycleMoveset.json
+                    if (_cacheWasInvalid) {
+                        std::vector<std::filesystem::path> filesToMerge;
+                        const std::string prefix = "User_CycleMoveset";
+                        for (const auto& dirEntry : std::filesystem::directory_iterator(currentFolder)) {
+                            if (dirEntry.is_regular_file() && dirEntry.path().filename().string().starts_with(prefix) &&
+                                dirEntry.path().extension() == ".json") {
+                                filesToMerge.push_back(dirEntry.path());
                             }
                         }
-                        continue;  // Pula para a próxima pasta
-                    }
 
-                    // PASSO 2: Lógica de Merge
-                    rapidjson::Document masterDoc;
-                    masterDoc.SetArray();
-                    auto& allocator = masterDoc.GetAllocator();
+                        if (!filesToMerge.empty()) {
+                            SKSE::log::info("Cache invalidado. Mesclando {} arquivos para {}", filesToMerge.size(),
+                                            PathToUTF8(currentFolder / "User_CycleMoveset.json"));
+                            rapidjson::Document masterDoc;
+                            masterDoc.SetArray();
+                            auto& allocator = masterDoc.GetAllocator();
 
-                    for (const auto& filePath : filesToMerge) {
-                        std::ifstream ifs(filePath);
-                        if (!ifs.is_open()) continue;
-                        std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+                            for (const auto& filePath : filesToMerge) {
+                                std::ifstream ifs(filePath);
+                                if (!ifs.is_open()) continue;
+                                std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+                                ifs.close();
 
-                        rapidjson::Document patchDoc;
-                        patchDoc.Parse(jsonContent.c_str());
+                                rapidjson::Document patchDoc;
+                                patchDoc.Parse(jsonContent.c_str());
 
-                        if (patchDoc.HasParseError() || !patchDoc.IsArray()) {
-                            SKSE::log::warn("Arquivo de patch mal formatado, pulando: {}", filePath.string());
-                            continue;
-                        }
-
-                        // Início do merge profundo
-                        for (auto& newProfile : patchDoc.GetArray()) {
-                            if (!newProfile.IsObject() || !newProfile.HasMember("Identifier")) continue;
-                            const char* newProfileId = newProfile["Identifier"].GetString();
-
-                            rapidjson::Value* masterProfile = nullptr;
-                            for (auto& p : masterDoc.GetArray()) {
-                                if (p.IsObject() && p.HasMember("Identifier") &&
-                                    strcmp(p["Identifier"].GetString(), newProfileId) == 0) {
-                                    masterProfile = &p;
-                                    break;
+                                if (patchDoc.HasParseError() || !patchDoc.IsArray()) {
+                                    SKSE::log::warn("Arquivo de patch mal formatado, pulando: {}", filePath.string());
+                                    continue;
                                 }
-                            }
 
-                            if (!masterProfile) {  // Perfil não existe, apenas copia
-                                rapidjson::Value newProfileCopy;
-                                newProfileCopy.CopyFrom(newProfile, allocator);
-                                masterDoc.PushBack(newProfileCopy, allocator);
-                            } else {  // Perfil existe, mescla o "Menu"
-                                if (newProfile.HasMember("Menu") && newProfile["Menu"].IsArray()) {
-                                    for (auto& newCategory : newProfile["Menu"].GetArray()) {
-                                        if (!newCategory.IsObject() || !newCategory.HasMember("Category")) continue;
-                                        const char* newCategoryName = newCategory["Category"].GetString();
+                                for (auto& newProfile : patchDoc.GetArray()) {
+                                    if (!newProfile.IsObject() || !newProfile.HasMember("Identifier")) continue;
+                                    const char* newProfileId = newProfile["Identifier"].GetString();
 
-                                        rapidjson::Value* masterCategory = nullptr;
-                                        for (auto& c : (*masterProfile)["Menu"].GetArray()) {
-                                            if (c.IsObject() && c.HasMember("Category") &&
-                                                strcmp(c["Category"].GetString(), newCategoryName) == 0) {
-                                                masterCategory = &c;
-                                                break;
-                                            }
+                                    rapidjson::Value* masterProfile = nullptr;
+                                    for (auto& p : masterDoc.GetArray()) {
+                                        if (p.IsObject() && p.HasMember("Identifier") &&
+                                            strcmp(p["Identifier"].GetString(), newProfileId) == 0) {
+                                            masterProfile = &p;
+                                            break;
                                         }
+                                    }
 
-                                        if (!masterCategory) {  // Categoria não existe, copia
-                                            rapidjson::Value newCategoryCopy;
-                                            newCategoryCopy.CopyFrom(newCategory, allocator);
-                                            (*masterProfile)["Menu"].PushBack(newCategoryCopy, allocator);
-                                        } else {  // Categoria existe, mescla "stances" sem duplicar
-                                            if (newCategory.HasMember("stances") && newCategory["stances"].IsArray()) {
-                                                for (auto& newStance : newCategory["stances"].GetArray()) {
-                                                    bool isDuplicate = false;
-                                                    if (newStance.IsObject() && newStance.HasMember("name") &&
-                                                        newStance.HasMember("index")) {
-                                                        for (auto& masterStance :
-                                                             (*masterCategory)["stances"].GetArray()) {
-                                                            if (masterStance.IsObject() &&
-                                                                masterStance.HasMember("name") &&
-                                                                masterStance.HasMember("index") &&
-                                                                masterStance["index"].GetInt() ==
-                                                                    newStance["index"].GetInt() &&
-                                                                strcmp(masterStance["name"].GetString(),
-                                                                       newStance["name"].GetString()) == 0) {
-                                                                isDuplicate = true;
-                                                                break;
+                                    if (!masterProfile) {
+                                        rapidjson::Value newProfileCopy;
+                                        newProfileCopy.CopyFrom(newProfile, allocator);
+                                        masterDoc.PushBack(newProfileCopy, allocator);
+                                    } else {
+                                        if (newProfile.HasMember("Menu") && newProfile["Menu"].IsArray()) {
+                                            for (auto& newCategory : newProfile["Menu"].GetArray()) {
+                                                if (!newCategory.IsObject() || !newCategory.HasMember("Category"))
+                                                    continue;
+                                                const char* newCategoryName = newCategory["Category"].GetString();
+
+                                                rapidjson::Value* masterCategory = nullptr;
+                                                for (auto& c : (*masterProfile)["Menu"].GetArray()) {
+                                                    if (c.IsObject() && c.HasMember("Category") &&
+                                                        strcmp(c["Category"].GetString(), newCategoryName) == 0) {
+                                                        masterCategory = &c;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if (!masterCategory) {
+                                                    rapidjson::Value newCategoryCopy;
+                                                    newCategoryCopy.CopyFrom(newCategory, allocator);
+                                                    (*masterProfile)["Menu"].PushBack(newCategoryCopy, allocator);
+                                                } else {
+                                                    if (newCategory.HasMember("stances") &&
+                                                        newCategory["stances"].IsArray()) {
+                                                        for (auto& newStance : newCategory["stances"].GetArray()) {
+                                                            bool isDuplicate = false;
+                                                            if (newStance.IsObject() && newStance.HasMember("name") &&
+                                                                newStance.HasMember("index")) {
+                                                                for (auto& masterStance :
+                                                                     (*masterCategory)["stances"].GetArray()) {
+                                                                    if (masterStance.IsObject() &&
+                                                                        masterStance.HasMember("name") &&
+                                                                        masterStance.HasMember("index") &&
+                                                                        masterStance["index"].GetInt() ==
+                                                                            newStance["index"].GetInt() &&
+                                                                        strcmp(masterStance["name"].GetString(),
+                                                                               newStance["name"].GetString()) == 0) {
+                                                                        isDuplicate = true;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                            if (!isDuplicate) {
+                                                                rapidjson::Value newStanceCopy;
+                                                                newStanceCopy.CopyFrom(newStance, allocator);
+                                                                (*masterCategory)["stances"].PushBack(newStanceCopy,
+                                                                                                      allocator);
                                                             }
                                                         }
-                                                    }
-                                                    if (!isDuplicate) {
-                                                        rapidjson::Value newStanceCopy;
-                                                        newStanceCopy.CopyFrom(newStance, allocator);
-                                                        (*masterCategory)["stances"].PushBack(newStanceCopy, allocator);
                                                     }
                                                 }
                                             }
@@ -3373,29 +3377,48 @@ void AnimationManager::LoadCycleMovesets() {
                                     }
                                 }
                             }
+
+                            if (masterDoc.IsArray() && !masterDoc.Empty()) {
+                                std::filesystem::path canonicalPath = currentFolder / "User_CycleMoveset.json";
+                                SKSE::log::info("Cache invalidado. Mesclando {} arquivos para {}", filesToMerge.size(),
+                                                PathToUTF8(canonicalPath));
+                                std::ofstream ofs(canonicalPath);
+                                if (ofs) {
+                                    rapidjson::StringBuffer buffer;
+                                    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                                    masterDoc.Accept(writer);
+                                    ofs << buffer.GetString();
+                                    ofs.close();
+                                }
+                                for (const auto& filePath : filesToMerge) {
+                                    if (filePath != canonicalPath) {
+                                        std::filesystem::remove(filePath);
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    // PASSO 3: Processar o documento final mesclado e fazer a limpeza
-                    if (masterDoc.IsArray() && !masterDoc.Empty()) {
-                        processJsonDocument(masterDoc);
+                    // --- PASSO 2: PROCESSAMENTO INCONDICIONAL ---
+                    // Após a fusão (se necessária), esta parte carrega o arquivo de configuração final.
+                    std::filesystem::path userFile = currentFolder / "User_CycleMoveset.json";
+                    std::filesystem::path defaultFile = currentFolder / "CycleMoveset.json";
+                    std::filesystem::path fileToProcess;
 
-                        std::filesystem::path canonicalPath = currentFolder / "User_CycleMoveset.json";
-                        std::ofstream ofs(canonicalPath);
-                        if (ofs) {
-                            rapidjson::StringBuffer buffer;
-                            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
-                            masterDoc.Accept(writer);
-                            ofs << buffer.GetString();
-                            ofs.close();
-                            SKSE::log::info("Arquivo mesclado salvo em: {}", canonicalPath.string());
-                        }
+                    if (std::filesystem::exists(userFile)) {
+                        fileToProcess = userFile;
+                    } else if (std::filesystem::exists(defaultFile)) {
+                        fileToProcess = defaultFile;
+                    }
 
-                        // Apaga os arquivos de patch (exceto o canônico, caso ele estivesse na lista)
-                        for (const auto& filePath : filesToMerge) {
-                            if (filePath != canonicalPath) {
-                                std::filesystem::remove(filePath);
-                                SKSE::log::info("Arquivo de patch removido: {}", filePath.string());
+                    if (!fileToProcess.empty()) {
+                        std::ifstream ifs(fileToProcess);
+                        if (ifs.is_open()) {
+                            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+                            rapidjson::Document doc;
+                            doc.Parse(jsonContent.c_str());
+                            if (!doc.HasParseError()) {
+                                processJsonDocument(doc);
                             }
                         }
                     }
@@ -3403,27 +3426,19 @@ void AnimationManager::LoadCycleMovesets() {
             }
         };
 
-        findAndMergeFiles(oarRootPath);
-        findAndMergeFiles(darRootPath);
-        
+        findAndProcessFiles(oarRootPath);
+        findAndProcessFiles(darRootPath);
 
-        // <<< MUDANÇA: Adiciona um passo de ordenação DEPOIS de carregar todos os arquivos
+        // Ordena os movesets com base no campo "order" lido dos arquivos
         SKSE::log::info("Ordenando movesets com base na prioridade definida...");
-
-        // Função auxiliar para ordenar os movesets dentro de uma coleção de categorias
         auto sortMovesets = [](std::map<std::string, WeaponCategory>& categories) {
             for (auto& categoryPair : categories) {
                 for (auto& instance : categoryPair.second.instances) {
                     std::sort(instance.modInstances.begin(), instance.modInstances.end(),
-                              [](const ModInstance& a, const ModInstance& b) {
-                                  // Ordena pelo campo 'order' em ordem crescente
-                                  return a.order < b.order;
-                              });
+                              [](const ModInstance& a, const ModInstance& b) { return a.order < b.order; });
                 }
             }
         };
-
-        // Aplica a ordenação a todas as regras (Player, GeneralNPC, e NPCs específicos)
         sortMovesets(_categories);
         sortMovesets(_generalNpcRule.categories);
         for (auto& rule : _npcRules) {
@@ -5422,9 +5437,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         return {&_generalNpcRule, 0, GetPriorityForType(RuleType::GeneralNPC)};
     }
 
-    std::vector<GlobalControl::MovesetCandidate> AnimationManager::GetAvailableMovesetIndices(
-        RE::Actor* actor,
-                                                                               const std::string& categoryName) {
+    std::vector<GlobalControl::MovesetCandidate> AnimationManager::GetAvailableMovesetIndices(RE::Actor* actor,const std::string& categoryName) {
         if (!actor) return {};
         //SKSE::log::info("---------------------------------------------------------------------");
         //SKSE::log::info("[GetAvailableIndices] Buscando índices para o ator: '{}', Categoria: '{}'", actor->GetName(),categoryName);
@@ -5457,12 +5470,27 @@ void AnimationManager::LoadGameDataForNpcRules() {
 
             for (const auto& modInst : instance.modInstances) {
                 if (modInst.isSelected) {
-                    if (modInst.requiredPerkID != 0) {
-                        auto requiredPerk = RE::TESForm::LookupByID<RE::BGSPerk>(modInst.requiredPerkID);
-                        if (!requiredPerk || !actor->HasPerk(requiredPerk)) {
-                            continue;  // Pula este moveset se o NPC não tiver o perk
+                    bool allPerksMet = true;
+                    std::vector<PerkDef> perksToCheck;
+                    perksToCheck.insert(perksToCheck.end(), instance.perkList.begin(), instance.perkList.end());
+                    perksToCheck.insert(perksToCheck.end(), modInst.perkList.begin(), modInst.perkList.end());
+                    // Não precisamos dos perks de sub-moveset aqui, pois estamos avaliando o moveset como um todo.
+
+                    if (!perksToCheck.empty()) {
+                        for (const auto& perkDef : perksToCheck) {
+                            const auto* requiredPerk = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
+                            if (!requiredPerk || !actor->HasPerk(const_cast<RE::BGSPerk*>(requiredPerk))) {
+                                allPerksMet = false;
+                                break;
+                            }
                         }
                     }
+
+                    // 2. Se os perks não forem atendidos, pula para o próximo moveset.
+                    if (!allPerksMet) {
+                        continue;
+                    }
+
                     bool conditionsMet = (hpPercent <= modInst.hp && level >= modInst.level &&
                                           stPercent <= modInst.st && mkPercent <= modInst.mn);
                     if (conditionsMet) {
@@ -5733,6 +5761,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
     }
 
     void AnimationManager::LoadAnimationLibrary() {
+        _cacheWasInvalid = false;
         const std::filesystem::path cachePath = "Data/SKSE/Plugins/CycleMovesets/CMF_Cache.json";
         std::vector<ManifestEntry> manifest;
 
@@ -5758,7 +5787,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
                             _allMods.size());
             return;  // Caminho rápido concluído!
         }
-
+        _cacheWasInvalid = true;
         // Se o cache não for válido ou não existir, executa o escaneamento completo.
         SKSE::log::info("Cache inválido ou inexistente. Executando escaneamento completo...");
         SaveAllSettings();
@@ -5956,34 +5985,35 @@ void AnimationManager::LoadGameDataForNpcRules() {
         conditionsArray.PushBack(condition, allocator);
     }
 
-    void AnimationManager::DrawPerkSelectorPopup() {
+void AnimationManager::DrawPerkSelectorPopup() {
         if (_isPerkSelectorOpen) {
             ImGui::OpenPopup("Select Perk");
-            _isPerkSelectorOpen = false;  // Reseta o gatilho
+            _isPerkSelectorOpen = false;
         }
 
+        static std::vector<PerkDef> tempSelectedPerks;
+
+        // Configuração do popup...
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImVec2 center = ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.6f));
 
         if (ImGui::BeginPopupModal("Select Perk", NULL, ImGuiWindowFlags_None)) {
-            ImGui::InputText("Filter", _perkFilter, sizeof(_perkFilter));
-            ImGui::Separator();
+            // --- MUDANÇA #1: USA AS NOVAS LISTAS AO ABRIR O POPUP ---
+            if (ImGui::IsWindowAppearing()) {
+                // Remove duplicatas que possam ter vindo de diferentes níveis
+                std::sort(_perksToDisplayInPopup.begin(), _perksToDisplayInPopup.end(),
+                          [](const PerkDef& a, const PerkDef& b) { return a.formID < b.formID; });
+                _perksToDisplayInPopup.erase(
+                    std::unique(_perksToDisplayInPopup.begin(), _perksToDisplayInPopup.end(),
+                                [](const PerkDef& a, const PerkDef& b) { return a.formID == b.formID; }),
+                    _perksToDisplayInPopup.end());
 
-            if (ImGui::Button("Clear Perk Requirement", ImVec2(-1, 0))) {
-                if (_stanceToEditPerk) {
-                    _stanceToEditPerk->requiredPerkID = 0;
-                    _stanceToEditPerk->requiredPerkPlugin.clear();
-                } else if (_movesetToEditPerk) {
-                    _movesetToEditPerk->requiredPerkID = 0;
-                    _movesetToEditPerk->requiredPerkPlugin.clear();
-                } else if (_subMovesetToEditPerk) {
-                    _subMovesetToEditPerk->requiredPerkID = 0;
-                    _subMovesetToEditPerk->requiredPerkPlugin.clear();
-                }
-                ImGui::CloseCurrentPopup();
+                tempSelectedPerks = _perksToDisplayInPopup;
             }
+
+            ImGui::InputText("Filter", _perkFilter, sizeof(_perkFilter));
             ImGui::Separator();
 
             if (ImGui::BeginChild("PerkList", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2))) {
@@ -5995,45 +6025,79 @@ void AnimationManager::LoadGameDataForNpcRules() {
                     std::transform(perk_name_lower.begin(), perk_name_lower.end(), perk_name_lower.begin(), ::tolower);
 
                     if (filter_str.empty() || perk_name_lower.find(filter_str) != std::string::npos) {
-                        if (ImGui::Button("Select")) {
-                            if (_stanceToEditPerk) {
-                                // --- LÓGICA DE HERANÇA DA STANCE ---
-                                _stanceToEditPerk->requiredPerkID = perk.formID;
-                                _stanceToEditPerk->requiredPerkPlugin = perk.pluginName;
-                                // Propaga para todos os movesets e sub-movesets dentro desta stance
-                                for (auto& modInst : _stanceToEditPerk->modInstances) {
-                                    modInst.requiredPerkID = perk.formID;
-                                    modInst.requiredPerkPlugin = perk.pluginName;
-                                    for (auto& subInst : modInst.subAnimationInstances) {
-                                        subInst.requiredPerkID = perk.formID;
-                                        subInst.requiredPerkPlugin = perk.pluginName;
-                                    }
-                                }
-                            } else if (_movesetToEditPerk) {
-                                // --- LÓGICA DE HERANÇA DO MOVESET ---
-                                _movesetToEditPerk->requiredPerkID = perk.formID;
-                                _movesetToEditPerk->requiredPerkPlugin = perk.pluginName;
-                                // Propaga para todos os sub-movesets dentro deste moveset
-                                for (auto& subInst : _movesetToEditPerk->subAnimationInstances) {
-                                    subInst.requiredPerkID = perk.formID;
-                                    subInst.requiredPerkPlugin = perk.pluginName;
-                                }
-                            } else if (_subMovesetToEditPerk) {
-                                // --- NENHUMA HERANÇA, aplica apenas no sub-moveset ---
-                                _subMovesetToEditPerk->requiredPerkID = perk.formID;
-                                _subMovesetToEditPerk->requiredPerkPlugin = perk.pluginName;
-                            }
-                            ImGui::CloseCurrentPopup();
+                        auto it = std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                               [&](const PerkDef& p) { return p.formID == perk.formID; });
+                        bool is_selected = (it != tempSelectedPerks.end());
+
+                        // --- MUDANÇA #2: LÓGICA PARA DESABILITAR PERKS HERDADOS ---
+                        bool is_inherited = _inheritedPerkFormIDs.count(perk.formID);
+                        if (is_inherited) {
+                            ImGui::BeginDisabled();
                         }
-                        ImGui::SameLine();
-                        ImGui::Text("%s | %s (%s)", perk.name.c_str(), perk.editorID.c_str(), perk.pluginName.c_str());
+
+                        if (ImGui::Checkbox(perk.name.c_str(), &is_selected)) {
+                            if (is_selected) {
+                                std::string origin = "";
+                                if (_stanceToEditPerk)
+                                    origin = "Stance";
+                                else if (_movesetToEditPerk)
+                                    origin = "Moveset";
+                                else if (_subMovesetToEditPerk)
+                                    origin = "SubMoveset";
+                                tempSelectedPerks.push_back({perk.pluginName, perk.formID, origin});
+                            } else {
+                                auto to_erase = std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                             [&](const PerkDef& p) { return p.formID == perk.formID; });
+                                if (to_erase != tempSelectedPerks.end()) {
+                                    tempSelectedPerks.erase(to_erase);
+                                }
+                            }
+                        }
+
+                        if (is_inherited) {
+                            ImGui::EndDisabled();
+                        }
+
+                        ImGui::SameLine(350);
+                        ImGui::TextDisabled("%s | %s", perk.editorID.c_str(), perk.pluginName.c_str());
                     }
                 }
             }
             ImGui::EndChild();
 
             ImGui::Separator();
-            if (ImGui::Button("Close", ImVec2(-1, 0))) {
+
+            // --- MUDANÇA #3: ADIÇÃO DOS BOTÕES "SAVE", "CLEAR ALL" e "CLOSE" ---
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                // Remove os perks herdados antes de salvar, para não duplicá-los
+                std::vector<PerkDef> perksToSave;
+                for (const auto& perk : tempSelectedPerks) {
+                    if (_inheritedPerkFormIDs.find(perk.formID) == _inheritedPerkFormIDs.end()) {
+                        perksToSave.push_back(perk);
+                    }
+                }
+
+                if (_stanceToEditPerk)
+                    _stanceToEditPerk->perkList = perksToSave;
+                else if (_movesetToEditPerk)
+                    _movesetToEditPerk->perkList = perksToSave;
+                else if (_subMovesetToEditPerk)
+                    _subMovesetToEditPerk->perkList = perksToSave;
+
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear All", ImVec2(120, 0))) {
+                // Remove da lista temporária todos os perks que NÃO são herdados
+                tempSelectedPerks.erase(std::remove_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                       [&](const PerkDef& p) {
+                                                           return _inheritedPerkFormIDs.find(p.formID) ==
+                                                                  _inheritedPerkFormIDs.end();
+                                                       }),
+                                        tempSelectedPerks.end());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(120, 0))) {
                 ImGui::CloseCurrentPopup();
             }
 
@@ -6052,3 +6116,4 @@ void AnimationManager::LoadGameDataForNpcRules() {
         }
         return "Unknown Perk";
     }
+

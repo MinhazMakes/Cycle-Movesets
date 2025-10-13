@@ -35,6 +35,15 @@ struct AnimationModDef {
     std::vector<SubAnimationDef> subAnimations;
 };
 
+struct PerkDef {
+    std::string pluginName;
+    RE::FormID formID = 0;
+    std::string origin;  // "Stance", "Moveset", ou "SubMoveset"
+
+    // Opcional: Adicionar um comparador para facilitar buscas
+    bool operator==(const RE::FormID& otherFormID) const { return formID == otherFormID; }
+};
+
 // --- Estruturas de Configuração do Usuário ---
 struct SubAnimationInstance {
     // --- ALTERADO: Usamos nomes para salvar/carregar. Os índices serão preenchidos em tempo de execução. ---
@@ -56,8 +65,7 @@ struct SubAnimationInstance {
     bool pDodge = false;
     DPATags dpaTags;
     bool hasCPA = false;
-    std::string requiredPerkPlugin;
-    RE::FormID requiredPerkID = 0;
+    std::vector<PerkDef> perkList;
 };
 
 struct ModInstance {
@@ -69,14 +77,12 @@ struct ModInstance {
     int st = 100;
     int mn = 100;
     int order = 0;
-    std::string requiredPerkPlugin;
-    RE::FormID requiredPerkID = 0;
+    std::vector<PerkDef> perkList;
 };
 
 struct CategoryInstance {
     std::vector<ModInstance> modInstances;
-    std::string requiredPerkPlugin;
-    RE::FormID requiredPerkID = 0;
+    std::vector<PerkDef> perkList;
 };
 
 struct WeaponCategory {

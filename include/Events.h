@@ -97,6 +97,9 @@ public:
     void PopulatePerkList();
 
 private:
+    std::vector<PerkDef> _perksToDisplayInPopup;
+    std::set<RE::FormID> _inheritedPerkFormIDs;
+    bool _cacheWasInvalid = false;
     std::vector<PerkInfo> _allPerks;
     std::map<std::string, WeaponCategory> _categories;
     std::map<std::string, WeaponCategory> _npcCategories;
@@ -417,7 +420,6 @@ struct FileSaveConfig {
     bool pBackLeft = false;
     bool pRandom = false;
     bool pDodge = false;
-    std::string requiredPerkPlugin;
-    RE::FormID requiredPerkID = 0;
+    std::vector<PerkDef> perkList;
 };
 
