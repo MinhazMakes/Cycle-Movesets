@@ -1005,14 +1005,13 @@ std::string PathToUTF8(const std::filesystem::path& path) {
 
     int AnimationManager::GetMaxMovesetsFor(const std::string& category, int stanceIndex) { 
     
-        if (stanceIndex < 0 || stanceIndex >= 4) {
-            return 0;
-        }
-        // Procura a categoria no mapa
         auto it = _maxMovesetsPerCategory.find(category);
         if (it != _maxMovesetsPerCategory.end()) {
-            // Se encontrou, retorna o valor para a stance específica
-            return it->second[stanceIndex];
+            const auto& counts = it->second;
+            // CORREÇÃO: Verifica os limites do vetor dinâmico
+            if (stanceIndex >= 0 && stanceIndex < counts.size()) {
+                return counts[stanceIndex];
+            }
         }
         // Se não encontrou a categoria, não há movesets
         return 0;
@@ -2683,7 +2682,7 @@ void AnimationManager::SaveCycleMovesets() {
             for (const auto& categoryPair : sourceCategories) {
                 const WeaponCategory& category = categoryPair.second;
                 const bool isPlayerRule = (rule == nullptr || rule->type == RuleType::Player);
-                int stanceLimit = isPlayerRule ? 4 : 1;
+                int stanceLimit = isPlayerRule ? category.instances.size() : 1;
 
                 for (int i = 0; i < stanceLimit; ++i) {  // Stances
                     const CategoryInstance& instance = category.instances[i];
@@ -4337,6 +4336,12 @@ void AnimationManager::LoadCycleMovesets() {
                 newCat.leftHandEquippedTypeValue = baseCat->leftHandEquippedTypeValue;
             }
 
+            newCat.instances.resize(4);
+            newCat.stanceNames.resize(4);
+            newCat.stanceNameBuffers.resize(4);
+            // --- FIM DA CORREÇÃO ---
+
+            // Agora este loop é seguro
             for (int i = 0; i < 4; ++i) {
                 std::string defaultName = std::format("Stance {}", i + 1);
                 newCat.stanceNames[i] = defaultName;
