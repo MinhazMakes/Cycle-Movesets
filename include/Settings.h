@@ -56,6 +56,8 @@ struct SubAnimationInstance {
     bool pDodge = false;
     DPATags dpaTags;
     bool hasCPA = false;
+    std::string requiredPerkPlugin;
+    RE::FormID requiredPerkID = 0;
 };
 
 struct ModInstance {
@@ -67,10 +69,14 @@ struct ModInstance {
     int st = 100;
     int mn = 100;
     int order = 0;
+    std::string requiredPerkPlugin;
+    RE::FormID requiredPerkID = 0;
 };
 
 struct CategoryInstance {
     std::vector<ModInstance> modInstances;
+    std::string requiredPerkPlugin;
+    RE::FormID requiredPerkID = 0;
 };
 
 struct WeaponCategory {

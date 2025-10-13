@@ -53,7 +53,12 @@ struct NpcRuleMatch {
 RuleType RuleTypeFromString(const std::string& s);
 std::string RuleTypeToString(RuleType type);
 
-
+struct PerkInfo {
+    RE::FormID formID;
+    std::string editorID;
+    std::string name;
+    std::string pluginName;
+};
 
 class AnimationManager : public clib_util::singleton::ISingleton<AnimationManager> {
 public:   
@@ -89,9 +94,10 @@ public:
     MovesetTags GetCurrentMovesetTags(const std::string& categoryName, int stanceIndex, int movesetIndex);
     void SaveAllSettings();
     void DeleteManagedUserJsonFiles();
+    void PopulatePerkList();
 
 private:
-    
+    std::vector<PerkInfo> _allPerks;
     std::map<std::string, WeaponCategory> _categories;
     std::map<std::string, WeaponCategory> _npcCategories;
     std::vector<AnimationModDef> _allMods;
@@ -369,12 +375,23 @@ private:
     void PerformFullScanAndSaveCache();
     void SaveAnimationLibraryCache(const std::vector<ManifestEntry>& manifest);
 
+    void AddHasPerkCondition(rapidjson::Value& conditionsArray, const std::string& plugin, RE::FormID formID,
+                             rapidjson::Document::AllocatorType& allocator);
+
+    void DrawPerkSelectorPopup();
+
+    std::string GetPerkNameByID(RE::FormID formID);
+
     // Funções para converter seus dados para JSON (essencial para o cache)
     void FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef);
     void ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const SubAnimationDef& subAnimDef);
     void FromJson(const rapidjson::Value& json, AnimationModDef& modDef);
     void ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const AnimationModDef& modDef);
-    
+    bool _isPerkSelectorOpen = false;
+    CategoryInstance* _stanceToEditPerk = nullptr;
+    ModInstance* _movesetToEditPerk = nullptr;
+    SubAnimationInstance* _subMovesetToEditPerk = nullptr;
+    char _perkFilter[128] = "";
 };
 
 struct FileSaveConfig {
@@ -400,5 +417,7 @@ struct FileSaveConfig {
     bool pBackLeft = false;
     bool pRandom = false;
     bool pDodge = false;
+    std::string requiredPerkPlugin;
+    RE::FormID requiredPerkID = 0;
 };
 

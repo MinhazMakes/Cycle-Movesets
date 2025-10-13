@@ -87,6 +87,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         }
         AnimationManager::GetSingleton()->PopulateNpcList();
         AnimationManager::GetSingleton()->LoadGameDataForNpcRules();
+        AnimationManager::GetSingleton()->PopulatePerkList();
         
     }
 
