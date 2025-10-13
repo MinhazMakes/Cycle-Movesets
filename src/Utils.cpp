@@ -1013,17 +1013,15 @@ void GlobalControl::UpdateSkyPromptTexts() {
     const int numStances = category.stanceNames.size();
     // --- LÓGICA PARA STANCES  ---
     if (g_currentStance == 0) {
-        // Caso especial: Nenhuma stance ativa.
-        StanceText = "Stances";  // Define um texto padrão.
-        // 'Next' aponta para a primeira stance (índice 0).
+        StanceText = "Stances";
         StanceNextText = animManager->GetStanceName(categoryName, 0);
-        // 'Back' aponta para a última stance (índice 3).
         StanceBackText = animManager->GetStanceName(categoryName, numStances - 1);
     } else {
-        // Lógica original para quando uma stance está ativa (1 a 4).
-        int currentStanceIndex = g_currentStance - 1;  // Converte para índice 0-3
+        int currentStanceIndex = g_currentStance - 1;
+        // CORREÇÃO: Lógica de ciclo dinâmica
         int nextStanceIndex = (currentStanceIndex + 1) >= numStances ? 0 : currentStanceIndex + 1;
         int backStanceIndex = (currentStanceIndex - 1) < 0 ? numStances - 1 : currentStanceIndex - 1;
+
         StanceText = animManager->GetStanceName(categoryName, currentStanceIndex);
         StanceNextText = animManager->GetStanceName(categoryName, nextStanceIndex);
         StanceBackText = animManager->GetStanceName(categoryName, backStanceIndex);

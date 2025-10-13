@@ -1912,7 +1912,8 @@ void AnimationManager::SaveAllSettings() {
                 const WeaponCategory& category = pair.second;
 
                 // --- LÓGICA CORRIGIDA: Determina quantas stances iterar ---
-                int maxStances = isNpcRule ? 1 : 4;  // NPCs usam 1 stance (índice 0), Player usa 4.
+                int maxStances =
+                    isNpcRule ? 1 : category.instances.size();  // NPCs usam 1 stance (índice 0), Player usa 4.
 
                 for (int i = 0; i < maxStances; ++i) {
                     const CategoryInstance& instance = category.instances[i];
@@ -2457,8 +2458,8 @@ void AnimationManager::UpdateMaxMovesetCache() {
         // 1. Cache do JOGADOR (lógica inalterada)
         for (auto& pair : _categories) {
             WeaponCategory& category = pair.second;
-            std::array<int, 4> counts = {0, 0, 0, 0};
-            for (int i = 0; i < 4; ++i) {
+            std::vector<int> counts(category.instances.size(), 0);
+            for (int i = 0; i < category.instances.size(); ++i) {
                 CategoryInstance& instance = category.instances[i];
                 int parentMovesetCount = 0;
                 for (auto& modInst : instance.modInstances) {

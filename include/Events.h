@@ -215,7 +215,7 @@ private:
 
      // NOVO CACHE ESTÁTICO: Armazena a contagem de movesets para acesso rápido.
     // A chave é o nome da categoria (ex: "Swords"), o valor é um array de 4 ints (um para cada stance).
-    inline static std::map<std::string, std::array<int, 4>> _maxMovesetsPerCategory;
+    inline static std::map<std::string, std::vector<int>> _maxMovesetsPerCategory;
     inline static std::map<RE::FormID, std::map<std::string, std::array<int, 4>>> _maxMovesetsPerCategory_NPC;
 
     // NOVA FUNÇÃO PRIVADA: Usada internamente para preencher o cache.
