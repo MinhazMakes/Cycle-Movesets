@@ -354,6 +354,26 @@ private:
         // Necessário para o std::sort
         bool operator<(const ScoredIndex& other) const { return score < other.score; }
     };
+
+    struct ManifestEntry {
+        std::string path;
+        int64_t last_modified;  // Usamos int64_t para serialização JSON fácil
+    };
+
+    // Função auxiliar para obter o tempo de modificação de um arquivo/pasta
+    std::optional<int64_t> GetFileTime(const std::filesystem::path& path);
+
+    // As novas funções principais da lógica de cache
+    void LoadAnimationLibrary();
+    bool ValidateCache(const std::filesystem::path& cachePath, std::vector<ManifestEntry>& outManifest);
+    void PerformFullScanAndSaveCache();
+    void SaveAnimationLibraryCache(const std::vector<ManifestEntry>& manifest);
+
+    // Funções para converter seus dados para JSON (essencial para o cache)
+    void FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef);
+    void ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const SubAnimationDef& subAnimDef);
+    void FromJson(const rapidjson::Value& json, AnimationModDef& modDef);
+    void ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const AnimationModDef& modDef);
     
 };
 

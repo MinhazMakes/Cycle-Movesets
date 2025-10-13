@@ -128,7 +128,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
     SetupLog();
     logger::info("Plugin loaded");
     AnimationManager::GetSingleton()->ScanAnimationMods();
-    AnimationManager::GetSingleton()->SaveAllSettings();
+    //AnimationManager::GetSingleton()->SaveAllSettings();
     SKSE::Init(skse);
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
     

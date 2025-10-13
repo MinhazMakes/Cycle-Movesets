@@ -14,6 +14,10 @@
 #include "ClibUtil/editorID.hpp"
 #include "Hooks.h"
 
+std::string PathToUTF8(const std::filesystem::path& path) {
+    auto u8str = path.u8string();
+    return std::string(reinterpret_cast<const char*>(u8str.c_str()), u8str.length());
+}
 
     // Função auxiliar para copiar um único arquivo com logs
     void CopySingleFile(const std::filesystem::path& sourceFile, const std::filesystem::path& destinationPath,
@@ -321,23 +325,7 @@
         LoadCustomCategories();
         LoadStanceNames();
 
-        ScanDarAnimations();
-        if (!_darSubMovesets.empty()) {
-            AnimationModDef darModDef;
-            darModDef.name = "[DAR] Animations";
-            darModDef.author = "Dynamic Animation Replacer";
-            darModDef.subAnimations = _darSubMovesets;  // Copia as animações DAR escaneadas
-            _allMods.push_back(darModDef);
-            SKSE::log::info("Integrou {} animações DAR como um mod virtual.", _darSubMovesets.size());
-        }
-
-
-        if (!std::filesystem::exists(oarRootPath)) return;
-        for (const auto& entry : std::filesystem::directory_iterator(oarRootPath)) {
-            if (entry.is_directory()) {
-                ProcessTopLevelMod(entry.path());
-            }
-        }
+        LoadAnimationLibrary();
         SKSE::log::info("Escaneamento de arquivos finalizado. {} mods carregados.", _allMods.size());
 
         // Agora que temos todos os mods, vamos encontrar quais arquivos já gerenciamos.
@@ -4295,6 +4283,7 @@ void AnimationManager::LoadCycleMovesets() {
             }
 
             _categories[newCat.name] = newCat;
+            _npcCategories[newCat.name] = newCat;
         }
     }
 
@@ -4578,7 +4567,7 @@ void AnimationManager::LoadCycleMovesets() {
                         _newCategoryBaseIndex = 0;
                         int current_idx = 0;
                         for (const auto& pair : _categories) {
-                            if (!pair.second.isCustom && !pair.second.isDualWield) {
+                            if (!pair.second.isCustom && !pair.second.isDualWield && !pair.second.isShieldCategory) {
                                 if (pair.first == category.baseCategoryName) {
                                     _newCategoryBaseIndex = current_idx;
                                     break;
@@ -5399,4 +5388,299 @@ void AnimationManager::LoadGameDataForNpcRules() {
 
         SKSE::log::info("Conversão global concluída. Total de {} arquivos renomeados.", totalFilesRenamed);
         RE::DebugNotification(std::format("{} MCO files were converted to BFCO.", totalFilesRenamed).c_str());
+    }
+
+    std::optional<int64_t> AnimationManager::GetFileTime(const std::filesystem::path& path) {
+        try {
+            if (std::filesystem::exists(path)) {
+                auto ftime = std::filesystem::last_write_time(path);
+                return ftime.time_since_epoch().count();
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::error("Erro ao acessar o tempo do arquivo {}: {}", path.string(), e.what());
+        }
+        return std::nullopt;
+    }
+
+    // Converte um objeto JSON para a sua struct SubAnimationDef
+    void AnimationManager::FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef) {
+        subAnimDef.name = json["name"].GetString();
+        subAnimDef.path = json["path"].GetString();
+        subAnimDef.attackCount = json["attackCount"].GetInt();
+        subAnimDef.powerAttackCount = json["powerAttackCount"].GetInt();
+        subAnimDef.hasIdle = json["hasIdle"].GetBool();
+        subAnimDef.hasAnimations = json["hasAnimations"].GetBool();
+        subAnimDef.hasCPA = json["hasCPA"].GetBool();
+        subAnimDef.dpaTags.hasA = json["dpaTags"]["A"].GetBool();
+        subAnimDef.dpaTags.hasB = json["dpaTags"]["B"].GetBool();
+        subAnimDef.dpaTags.hasL = json["dpaTags"]["L"].GetBool();
+        subAnimDef.dpaTags.hasR = json["dpaTags"]["R"].GetBool();
+    }
+
+    // Converte sua struct SubAnimationDef para um objeto JSON
+    void AnimationManager::ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer,
+                                  const SubAnimationDef& subAnimDef) {
+        writer.StartObject();
+        writer.Key("name");
+        writer.String(subAnimDef.name.c_str());
+        writer.Key("path");
+        writer.String(PathToUTF8(subAnimDef.path).c_str());
+        writer.Key("attackCount");
+        writer.Int(subAnimDef.attackCount);
+        writer.Key("powerAttackCount");
+        writer.Int(subAnimDef.powerAttackCount);
+        writer.Key("hasIdle");
+        writer.Bool(subAnimDef.hasIdle);
+        writer.Key("hasAnimations");
+        writer.Bool(subAnimDef.hasAnimations);
+        writer.Key("hasCPA");
+        writer.Bool(subAnimDef.hasCPA);
+        writer.Key("dpaTags");
+        writer.StartObject();
+        writer.Key("A");
+        writer.Bool(subAnimDef.dpaTags.hasA);
+        writer.Key("B");
+        writer.Bool(subAnimDef.dpaTags.hasB);
+        writer.Key("L");
+        writer.Bool(subAnimDef.dpaTags.hasL);
+        writer.Key("R");
+        writer.Bool(subAnimDef.dpaTags.hasR);
+        writer.EndObject();
+        writer.EndObject();
+    }
+
+    // Converte um objeto JSON para a sua struct AnimationModDef
+    void AnimationManager::FromJson(const rapidjson::Value& json, AnimationModDef& modDef) {
+        modDef.name = json["name"].GetString();
+        modDef.author = json["author"].GetString();
+        const rapidjson::Value& subAnims = json["subAnimations"];
+        for (const auto& subJson : subAnims.GetArray()) {
+            SubAnimationDef subDef;
+            FromJson(subJson, subDef);
+            modDef.subAnimations.push_back(subDef);
+        }
+    }
+
+    // Converte sua struct AnimationModDef para um objeto JSON
+    void AnimationManager::ToJson(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer,
+                                  const AnimationModDef& modDef) {
+        writer.StartObject();
+        writer.Key("name");
+        writer.String(modDef.name.c_str());
+        writer.Key("author");
+        writer.String(modDef.author.c_str());
+        writer.Key("subAnimations");
+        writer.StartArray();
+        for (const auto& subAnim : modDef.subAnimations) {
+            ToJson(writer, subAnim);
+        }
+        writer.EndArray();
+        writer.EndObject();
+    }
+
+    void AnimationManager::LoadAnimationLibrary() {
+        const std::filesystem::path cachePath = "Data/SKSE/Plugins/CycleMovesets/CMF_Cache.json";
+        std::vector<ManifestEntry> manifest;
+
+        // Tenta validar o cache. Se for válido, carrega a biblioteca a partir dele.
+        if (ValidateCache(cachePath, manifest)) {
+            SKSE::log::info("Cache da biblioteca de animações é válido. Carregando do cache...");
+
+            std::ifstream ifs(cachePath);
+            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+            ifs.close();
+
+            rapidjson::Document doc;
+            doc.Parse(jsonContent.c_str());
+
+            _allMods.clear();
+            const rapidjson::Value& library = doc["library"];
+            for (const auto& modJson : library.GetArray()) {
+                AnimationModDef modDef;
+                FromJson(modJson, modDef);
+                _allMods.push_back(modDef);
+            }
+            SKSE::log::info("Biblioteca de animações carregada do cache com sucesso. {} mods carregados.",
+                            _allMods.size());
+            return;  // Caminho rápido concluído!
+        }
+
+        // Se o cache não for válido ou não existir, executa o escaneamento completo.
+        SKSE::log::info("Cache inválido ou inexistente. Executando escaneamento completo...");
+        SaveAllSettings();
+        PerformFullScanAndSaveCache();
+    }
+
+    // A função que valida o manifesto do cache contra o estado do disco.
+    bool AnimationManager::ValidateCache(const std::filesystem::path& cachePath,
+                                         std::vector<ManifestEntry>& outManifest) {
+        if (!std::filesystem::exists(cachePath)) return false;
+
+        std::ifstream ifs(cachePath);
+        if (!ifs) return false;
+        std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
+        ifs.close();
+
+        rapidjson::Document doc;
+        doc.Parse(jsonContent.c_str());
+
+        if (doc.HasParseError() || !doc.HasMember("manifest") || !doc["manifest"].IsArray()) {
+            return false;  // Cache corrompido
+        }
+
+        const rapidjson::Value& manifestArray = doc["manifest"];
+        // Usamos um set de strings para comparar os caminhos normalizados
+        std::set<std::string> pathsInManifest;
+
+        for (const auto& entry : manifestArray.GetArray()) {
+            const char* pathStr = entry["path"].GetString();
+            std::filesystem::path path = std::filesystem::u8path(pathStr);
+            int64_t savedTime = entry["last_modified"].GetInt64();
+
+            auto currentTimeOpt = GetFileTime(path);
+            if (!currentTimeOpt || *currentTimeOpt != savedTime) {
+                SKSE::log::info("Cache inválido: Mudança detectada em '{}'.", PathToUTF8(path));
+                return false;  // Arquivo foi modificado ou removido
+            }
+            pathsInManifest.insert(pathStr);  // Armazena o caminho como string UTF-8
+        }
+
+        // --- LÓGICA DE VERIFICAÇÃO DE NOVAS PASTAS CORRIGIDA ---
+
+        auto checkForNewFolders = [&](const std::filesystem::path& rootPath, const std::string& type) {
+            if (std::filesystem::exists(rootPath)) {
+                // Itera recursivamente para encontrar mods em subpastas
+                for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(rootPath)) {
+                    // A condição agora é procurar por 'user.json'
+                    if (dirEntry.is_directory() && std::filesystem::exists(dirEntry.path() / "user.json")) {
+                        std::string currentPathStr = PathToUTF8(dirEntry.path());
+                        if (pathsInManifest.find(currentPathStr) == pathsInManifest.end()) {
+                            SKSE::log::info("Cache inválido: Novo mod {} detectado em '{}'.", type, currentPathStr);
+                            return true;  // Encontrou nova pasta, invalida o cache
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
+        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
+        if (checkForNewFolders(oarRootPath, "OAR")) {
+            return false;  // Invalida se encontrar novas pastas OAR
+        }
+
+        const std::filesystem::path darRootPath =
+            "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
+        if (checkForNewFolders(darRootPath, "DAR")) {
+            return false;  // Invalida se encontrar novas pastas DAR
+        }
+
+        return true;  // Se todas as verificações passaram, o cache é válido!
+    }
+    // Sua lógica de escaneamento original, agora refatorada para também construir e salvar o cache.
+    void AnimationManager::PerformFullScanAndSaveCache() {
+        _allMods.clear();
+        _darSubMovesets.clear();
+        std::vector<ManifestEntry> manifest;
+        std::set<std::filesystem::path> processedPaths;  // Para evitar processamento duplicado
+
+        // --- Escaneamento OAR ---
+        auto processModDirectory = [&](const std::filesystem::path& rootPath) {
+            if (!std::filesystem::exists(rootPath)) return;
+
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+                // A sua lógica de identificação de mod (config.json) parece estar em ProcessTopLevelMod
+                // Vamos manter isso, mas adicionar a pasta ao manifesto corretamente
+                if (entry.is_directory() && std::filesystem::exists(entry.path() / "config.json")) {
+                    ProcessTopLevelMod(entry.path());
+                }
+            }
+        };
+
+        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
+        processModDirectory(oarRootPath);
+
+        // --- Escaneamento DAR ---
+        ScanDarAnimations();
+        if (!_darSubMovesets.empty()) {
+            AnimationModDef darModDef;
+            darModDef.name = "[DAR] Animations";
+            darModDef.author = "Dynamic Animation Replacer";
+            darModDef.subAnimations = _darSubMovesets;
+            _allMods.push_back(darModDef);
+        }
+
+        // --- Construção do Manifesto (após _allMods ser populado) ---
+        for (const auto& mod : _allMods) {
+            for (const auto& subAnim : mod.subAnimations) {
+                // O path em SubAnimationDef é o DIRETÓRIO da animação, que é o que queremos rastrear
+                std::filesystem::path directoryToTrack = subAnim.path;
+                if (std::filesystem::is_regular_file(directoryToTrack)) {
+                    directoryToTrack = directoryToTrack.parent_path();
+                }
+
+                if (auto modTime = GetFileTime(directoryToTrack)) {
+                    // --- CORREÇÃO AQUI ---
+                    // ANTES: manifest.push_back({entry.path().string(), *modTime});
+                    // DEPOIS: Usamos a função segura para garantir que o path seja armazenado como UTF-8
+                    manifest.push_back({PathToUTF8(directoryToTrack), *modTime});
+                }
+            }
+        }
+
+        SKSE::log::info("Escaneamento completo finalizado. {} mods carregados.", _allMods.size());
+        SaveAnimationLibraryCache(manifest);
+    }
+
+    // Salva o estado atual da biblioteca e o manifesto no arquivo de cache.
+    void AnimationManager::SaveAnimationLibraryCache(const std::vector<ManifestEntry>& manifest) {
+        const std::filesystem::path cachePath = "Data/SKSE/Plugins/CycleMovesets/CMF_Cache.json";
+        try {
+            // Garante que o diretório pai do arquivo de cache exista.
+            if (!std::filesystem::exists(cachePath.parent_path())) {
+                std::filesystem::create_directories(cachePath.parent_path());
+                SKSE::log::info("Diretório de cache criado em: {}", PathToUTF8(cachePath.parent_path()));
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::error("Falha ao criar o diretório de cache: {}", e.what());
+            return;  // Aborta o salvamento se não conseguir criar a pasta.
+        }
+
+        rapidjson::StringBuffer sb;
+        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(sb);
+
+        writer.StartObject();
+
+        // Salva o Manifesto
+        writer.Key("manifest");
+        writer.StartArray();
+        for (const auto& entry : manifest) {
+            writer.StartObject();
+            writer.Key("path");
+            writer.String(entry.path.c_str());
+            writer.Key("last_modified");
+            writer.Int64(entry.last_modified);
+            writer.EndObject();
+        }
+        writer.EndArray();
+
+        // Salva a Biblioteca de Animações
+        writer.Key("library");
+        writer.StartArray();
+        for (const auto& modDef : _allMods) {
+            ToJson(writer, modDef);
+        }
+        writer.EndArray();
+
+        writer.EndObject();
+
+        // Escreve o arquivo
+        std::ofstream ofs(cachePath);
+        if (ofs) {
+            ofs << sb.GetString();
+            ofs.close();
+            SKSE::log::info("Novo cache da biblioteca de animações salvo em '{}'.", cachePath.string());
+        } else {
+            SKSE::log::error("Falha ao salvar o cache da biblioteca em '{}'.", cachePath.string());
+        }
     }
