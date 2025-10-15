@@ -100,7 +100,7 @@ RE::BSEventNotifyControl GlobalControl::InputListener::ProcessEvent(RE::InputEve
                     wheelerOpen = true;
                     SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
                     SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
-                } else if (button->IsUp() && !IsAnyMenuOpen) {
+                } else if (button->IsUp() && ShouldShowPrompts()) {
                     wheelerOpen = false;
                     SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
                     SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
@@ -194,11 +194,11 @@ void GlobalControl::InputListener::UpdateDirectionalState() {
     }
     RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("DirecionalCycleMoveset", directionalState);
     GlobalControl::UpdatePowerAttackGlobals();
-    if (wheelerOpen) {
+    /*if (wheelerOpen) {
         wheelerOpen = false;
         SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
         SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-    }
+    }*/
 }
 
 // NOVA FUNÇÃO AUXILIAR PARA QUALQUER ATOR
@@ -685,8 +685,26 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
     if (!event) {
              return RE::BSEventNotifyControl::kContinue;
     }
+    const std::array<RE::BSFixedString, 3> relevantMenus = {RE::InventoryMenu::MENU_NAME, RE::ContainerMenu::MENU_NAME,
+                                                            RE::FavoritesMenu::MENU_NAME};
+    bool isRelevantMenu = false;
+    for (const auto& menuName : relevantMenus) {
+        if (event->menuName == menuName) {
+            isRelevantMenu = true;
+            break;
+        }
+    }
 
+    if (isRelevantMenu) {
+        // A mágica acontece aqui!
+        // event->opening é 'true' se o menu está abrindo, e 'false' se está fechando.
+        // Nós simplesmente atribuímos esse valor à nossa flag.
+        Hooks::is_open.store(event->opening);
+        logger::info("Menu relevante '{}' mudou de estado. is_open agora é: {}", event->menuName.c_str(),
+                     event->opening);
+    }
     if (event->opening) {
+
         if (Cycleopen) {
             Cycleopen = false;
             SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
@@ -1212,4 +1230,177 @@ void GlobalControl::UpdatePromptVisibility() {
         SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
         SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
     }
+}
+
+std::span<const SkyPromptAPI::Prompt> GlobalControl::EquipMenu::GetPrompts() const { return prompts; }
+bool isTwoHanded(RE::TESForm* a_weap) {
+    if (!a_weap || !a_weap->IsWeapon()) return false;
+    auto weap = a_weap->As<RE::TESObjectWEAP>();
+    // No dynamicGrip, isso inclui espadas e machados de duas mãos.
+    if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
+    return false;
+}
+
+void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
+    if (!actor || !item || !targetSlot) return;
+
+    auto equipManager = RE::ActorEquipManager::GetSingleton();
+    if (!equipManager) return;
+
+    if (item->IsWeapon() && isTwoHanded(item)) {
+        auto weapon = item->As<RE::TESObjectWEAP>();
+        auto originalSlot = weapon->GetEquipSlot();
+
+        // A lógica para enganar o motor do jogo continua a mesma
+        RE::BGSEquipSlot* tempSlot =
+            (targetSlot == Hooks::g_rightHandSlot) ? Hooks::g_leftHandSlot : Hooks::g_rightHandSlot;
+        weapon->SetEquipSlot(tempSlot);
+
+        SKSE::GetTaskInterface()->AddTask([=]() {
+            // --- INÍCIO DA CORREÇÃO DE TIPO ---
+
+            // 1. Pega o FORM equipado na mão direita.
+            if (auto rightHandForm = actor->GetEquippedObject(false)) {
+                // 2. Converte (faz o cast) de TESForm* para TESBoundObject*.
+                if (auto rightHandObject = rightHandForm->As<RE::TESBoundObject>()) {
+                    // 3. Agora sim, desequipa o objeto com o tipo correto.
+                    equipManager->UnequipObject(actor, rightHandObject, nullptr, 1, Hooks::g_rightHandSlot, true, false,
+                                                false, true);
+                }
+            }
+
+            // 4. Repete o processo para a mão esquerda.
+            if (auto leftHandForm = actor->GetEquippedObject(true)) {
+                if (auto leftHandObject = leftHandForm->As<RE::TESBoundObject>()) {
+                    equipManager->UnequipObject(actor, leftHandObject, nullptr, 1, Hooks::g_leftHandSlot, true, false,
+                                                false, true);
+                }
+            }
+            // --- FIM DA CORREÇÃO ---
+
+            // Agora, com as mãos garantidamente vazias, equipamos nosso item no slot alvo.
+            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
+
+            // Forçamos a atualização da UI
+            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
+
+            // Agendamos a restauração do slot original da arma
+            SKSE::GetTaskInterface()->AddTask([=]() {
+                if (auto form = RE::TESForm::LookupByID(item->GetFormID())) {
+                    if (auto weapToRestore = form->As<RE::TESObjectWEAP>()) {
+                        weapToRestore->SetEquipSlot(originalSlot);
+                    }
+                }
+            });
+        });
+    } else {
+        // Para itens de uma mão, também aplicamos a lógica correta.
+        SKSE::GetTaskInterface()->AddTask([=]() {
+            if (auto currentFormInSlot = actor->GetEquippedObject(targetSlot == Hooks::g_leftHandSlot)) {
+                if (auto currentObjectInSlot = currentFormInSlot->As<RE::TESBoundObject>()) {
+                    equipManager->UnequipObject(actor, currentObjectInSlot, nullptr, 1, targetSlot, true, false, false,
+                                                true);
+                }
+            }
+
+            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
+            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
+        });
+    }
+}
+
+void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
+    if (event.type != SkyPromptAPI::PromptEventType::kAccepted) {
+        return;
+    }
+
+    auto player = RE::PlayerCharacter::GetSingleton();
+    // Usa a função auxiliar para pegar o item que estava sob o cursor
+    const auto itemEntry = Hooks::GetSelectedEntryInMenu();
+
+    if (!player || !itemEntry) {
+        return;
+    }
+    #ifdef GetObject
+    #undef GetObject
+    #endif
+    auto itemToEquip = itemEntry->GetObject();
+    if (!itemToEquip) {
+        return;
+    }
+
+    switch (event.prompt.eventID) {
+        case 0:  // Equipar na mão ESQUERDA
+            logger::info("Equipando {} na mão esquerda.", itemToEquip->GetName());
+            EquipItemWithGripChange(player, itemToEquip, Hooks::g_leftHandSlot);
+            break;
+
+        case 1:  // Equipar na mão DIREITA
+            logger::info("Equipando {} na mão direita.", itemToEquip->GetName());
+            EquipItemWithGripChange(player, itemToEquip, Hooks::g_rightHandSlot);
+            break;
+    }
+}
+
+void GlobalControl::EquipMenu::Show(const RE::TESBoundObject* a_weapon) const {
+    // A chave está aqui: RE::Inventory3DManager
+    // Este singleton gerencia o modelo 3D que você vê no menu.
+    if (const auto a_ref = RE::Inventory3DManager::GetSingleton()->tempRef) {
+        // 'tempRef' é uma referência temporária para o modelo 3D na tela.
+        // Pegamos o FormID dela para usar como nosso refid.
+        const auto refid = a_ref->GetFormID();
+
+        // ATUALIZAMOS O REFID DOS NOSSOS PROMPTS!
+        Left_Hand.refid = refid;
+        Right_Hand.refid = refid;
+    } else {
+        // Se, por algum motivo, não houver um modelo 3D, voltamos para 0.
+        Left_Hand.refid = 0;
+        Right_Hand.refid = 0;
+    }
+
+    // Agora que os prompts têm o refid correto, nós os enviamos.
+    SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip);  // Use seu ClientID aqui
+}
+
+void GlobalControl::EquipMenu::Hide() const {
+    // Simplesmente remove os prompts
+    SkyPromptAPI::RemovePrompt(this, GlobalControl::Dynamicgrip);  // Use seu ClientID aqui
+}
+
+RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::TESEquipEvent* a_event,
+                                                                     RE::BSTEventSource<RE::TESEquipEvent>*) {
+    // Só nos importamos com eventos do jogador e quando ele está EQUIPANDO algo
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!a_event || a_event->actor.get() != player || !a_event->equipped) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // Acessa o inventário do jogador para ver o que está realmente equipado
+    if (auto invChanges = player->GetInventoryChanges()) {
+        if (auto entryList = invChanges->entryList) {
+            // Itera sobre todos os itens equipados
+            for (auto& entry : *entryList) {
+    #ifdef GetObject
+    #undef GetObject
+    #endif
+                if (entry && entry->GetObject() && entry->IsWorn()) {
+                    auto item = entry->GetObject();
+
+                    // Se encontrarmos uma arma de 2 mãos que está com o slot ERRADO...
+                    if (isTwoHanded(item)) {  // 'isTwoHanded' é a função que já criamos
+                        auto weapon = item->As<RE::TESObjectWEAP>();
+                        if (weapon->GetEquipSlot() != Hooks::g_twoHandSlot) {
+                            // ...nós a CORRIGIMOS imediatamente!
+                            logger::warn("Arma de duas mãos '{}' encontrada com slot incorreto. Corrigindo.",
+                                         weapon->GetName());
+                            weapon->SetEquipSlot(Hooks::g_twoHandSlot);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return RE::BSEventNotifyControl::kContinue;
 }

@@ -14,6 +14,7 @@
 #include "ClibUtil/editorID.hpp"
 #include "Hooks.h"
 
+
 std::string PathToUTF8(const std::filesystem::path& path) {
     auto u8str = path.u8string();
     return std::string(reinterpret_cast<const char*>(u8str.c_str()), u8str.length());
@@ -183,7 +184,7 @@ std::string PathToUTF8(const std::filesystem::path& path) {
     // --- DESAFIO 1: Nova função para escanear a pasta do sub-moveset em busca de tags ---
     void ScanSubAnimationFolderForTags(const std::filesystem::path& subAnimPath,
                                                          SubAnimationDef& subAnimDef) {
-        try {
+      try {
         if (!std::filesystem::exists(subAnimPath) || !std::filesystem::is_directory(subAnimPath)) {
             return;
         }
@@ -252,10 +253,10 @@ std::string PathToUTF8(const std::filesystem::path& path) {
          logger::info("Scan da pasta '{}': hasDPA (A:{}, B:{}, L:{}, R:{}), hasCPA:{}", subAnimDef.name,
                         subAnimDef.dpaTags.hasA, subAnimDef.dpaTags.hasB, subAnimDef.dpaTags.hasL, subAnimDef.dpaTags.hasR,
                      subAnimDef.hasCPA);
-        } catch (const std::filesystem::filesystem_error& e) {
+      } catch (const std::filesystem::filesystem_error& e) {
             SKSE::log::critical("Erro de filesystem em ScanSubAnimationFolderForTags na pasta '{}': {}",
                                 subAnimPath.string(), e.what());
-        }
+      }
     }
 
     // --- Lógica de Escaneamento (Carrega a Biblioteca) ---
@@ -2698,7 +2699,10 @@ void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArr
                 }
             }
         }
-
+        const auto& currentKeywords = isLeftHand ? currentCategory->leftHandKeywords : currentCategory->keywords;
+        for (const auto& kw : currentKeywords) {
+            competingKeywords.erase(kw);
+        }
         // Se não houver keywords concorrentes, não há nada a fazer.
         if (competingKeywords.empty()) {
             return;
@@ -5716,7 +5720,49 @@ void AnimationManager::LoadGameDataForNpcRules() {
         }
         return std::nullopt;
     }
+    std::map<std::string, int64_t> AnimationManager::GetCurrentAnimationState() {
+        std::map<std::string, int64_t> currentState;
+        const std::vector<std::filesystem::path> rootPaths = {
+            "Data/meshes/actors/character/animations/OpenAnimationReplacer",
+            "Data/meshes/actors/character/animations/DynamicAnimationReplacer/_CustomConditions"};
 
+        for (const auto& rootPath : rootPaths) {
+            if (!std::filesystem::exists(rootPath) || !std::filesystem::is_directory(rootPath)) {
+                continue;
+            }
+
+            try {
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+                    if (entry.is_directory()) {
+                        const auto& dirPath = entry.path();
+
+                        bool hasHkx = false;
+                        for (const auto& file : std::filesystem::directory_iterator(dirPath)) {
+                            if (file.is_regular_file() && file.path().extension() == ".hkx") {
+                                hasHkx = true;
+                                break;
+                            }
+                        }
+
+                        bool isValidModFolder = hasHkx && (std::filesystem::exists(dirPath / "_conditions.txt") ||
+                                                           std::filesystem::exists(dirPath / "config.json") ||
+                                                           std::filesystem::exists(dirPath / "user.json"));
+
+                        if (isValidModFolder) {
+                            auto modTimeOpt = GetFileTime(dirPath);
+                            if (modTimeOpt) {
+                                currentState[PathToUTF8(dirPath)] = *modTimeOpt;
+                            }
+                        }
+                    }
+                }
+            } catch (const std::filesystem::filesystem_error& e) {
+                SKSE::log::error("Erro de filesystem em GetCurrentAnimationState ao escanear '{}': {}",
+                                 PathToUTF8(rootPath), e.what());
+            }
+        }
+        return currentState;
+    }
     // Converte um objeto JSON para a sua struct SubAnimationDef
     void AnimationManager::FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef) {
         subAnimDef.name = json["name"].GetString();
@@ -5796,18 +5842,31 @@ void AnimationManager::LoadGameDataForNpcRules() {
     void AnimationManager::LoadAnimationLibrary() {
         _cacheWasInvalid = false;
         const std::filesystem::path cachePath = "Data/SKSE/Plugins/CycleMovesets/CMF_Cache.json";
-        std::vector<ManifestEntry> manifest;
 
         // Tenta validar o cache. Se for válido, carrega a biblioteca a partir dele.
-        if (ValidateCache(cachePath, manifest)) {
+        if (ValidateCache(cachePath)) {
             SKSE::log::info("Cache da biblioteca de animações é válido. Carregando do cache...");
 
             std::ifstream ifs(cachePath);
+            if (!ifs) {
+                SKSE::log::error(
+                    "Falha ao abrir o arquivo de cache para leitura, mesmo após validação. Forçando re-scan.");
+                _cacheWasInvalid = true;
+                PerformFullScanAndSaveCache();
+                return;
+            }
             std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
             ifs.close();
 
             rapidjson::Document doc;
             doc.Parse(jsonContent.c_str());
+
+            if (doc.HasParseError() || !doc.HasMember("library") || !doc["library"].IsArray()) {
+                SKSE::log::error("Arquivo de cache corrompido. Forçando re-scan.");
+                _cacheWasInvalid = true;
+                PerformFullScanAndSaveCache();
+                return;
+            }
 
             _allMods.clear();
             const rapidjson::Value& library = doc["library"];
@@ -5820,20 +5879,25 @@ void AnimationManager::LoadGameDataForNpcRules() {
                             _allMods.size());
             return;  // Caminho rápido concluído!
         }
-        _cacheWasInvalid = true;
+
         // Se o cache não for válido ou não existir, executa o escaneamento completo.
-        SKSE::log::info("Cache inválido ou inexistente. Executando escaneamento completo...");
+        _cacheWasInvalid = true;
         SaveAllSettings();
         PerformFullScanAndSaveCache();
     }
 
     // A função que valida o manifesto do cache contra o estado do disco.
-    bool AnimationManager::ValidateCache(const std::filesystem::path& cachePath,
-                                         std::vector<ManifestEntry>& outManifest) {
-        if (!std::filesystem::exists(cachePath)) return false;
+    bool AnimationManager::ValidateCache(const std::filesystem::path& cachePath) {
+        if (!std::filesystem::exists(cachePath)) {
+            SKSE::log::info("Arquivo de cache não encontrado.");
+            return false;
+        }
 
         std::ifstream ifs(cachePath);
-        if (!ifs) return false;
+        if (!ifs) {
+            SKSE::log::warn("Não foi possível abrir o arquivo de cache para leitura.");
+            return false;
+        }
         std::string jsonContent((std::istreambuf_iterator<char>(ifs)), {});
         ifs.close();
 
@@ -5841,73 +5905,61 @@ void AnimationManager::LoadGameDataForNpcRules() {
         doc.Parse(jsonContent.c_str());
 
         if (doc.HasParseError() || !doc.HasMember("manifest") || !doc["manifest"].IsArray()) {
+            SKSE::log::warn("Cache corrompido (JSON inválido ou sem manifesto).");
             return false;  // Cache corrompido
         }
 
+        std::map<std::string, int64_t> manifestMap;
         const rapidjson::Value& manifestArray = doc["manifest"];
-        // Usamos um set de strings para comparar os caminhos normalizados
-        std::set<std::string> pathsInManifest;
-
         for (const auto& entry : manifestArray.GetArray()) {
-            const char* pathStr = entry["path"].GetString();
-            std::filesystem::path path = std::filesystem::u8path(pathStr);
-            int64_t savedTime = entry["last_modified"].GetInt64();
-
-            auto currentTimeOpt = GetFileTime(path);
-            if (!currentTimeOpt || *currentTimeOpt != savedTime) {
-                SKSE::log::info("Cache inválido: Mudança detectada em '{}'.", PathToUTF8(path));
-                return false;  // Arquivo foi modificado ou removido
+            if (entry.IsObject() && entry.HasMember("path") && entry.HasMember("last_modified")) {
+                manifestMap[entry["path"].GetString()] = entry["last_modified"].GetInt64();
             }
-            pathsInManifest.insert(pathStr);  // Armazena o caminho como string UTF-8
         }
 
-        // --- LÓGICA DE VERIFICAÇÃO DE NOVAS PASTAS CORRIGIDA ---
+        // Pega o estado atual REAL do disco
+        std::map<std::string, int64_t> currentState = GetCurrentAnimationState();
 
-        auto checkForNewFolders = [&](const std::filesystem::path& rootPath, const std::string& type) {
-            if (std::filesystem::exists(rootPath)) {
-                // Itera recursivamente para encontrar mods em subpastas
-                for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(rootPath)) {
-                    // A condição agora é procurar por 'user.json'
-                    if (dirEntry.is_directory() && std::filesystem::exists(dirEntry.path() / "user.json")) {
-                        std::string currentPathStr = PathToUTF8(dirEntry.path());
-                        if (pathsInManifest.find(currentPathStr) == pathsInManifest.end()) {
-                            SKSE::log::info("Cache inválido: Novo mod {} detectado em '{}'.", type, currentPathStr);
-                            return true;  // Encontrou nova pasta, invalida o cache
-                        }
-                    }
-                }
-            }
+        // 1. Verificação de Tamanho: A maneira mais rápida de detectar adições/remoções.
+        if (manifestMap.size() != currentState.size()) {
+            SKSE::log::info("Cache inválido: Número de pastas de animação mudou (Manifesto: {}, Disco: {}).",
+                            manifestMap.size(), currentState.size());
             return false;
-        };
-
-        const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
-        if (checkForNewFolders(oarRootPath, "OAR")) {
-            return false;  // Invalida se encontrar novas pastas OAR
         }
 
-        const std::filesystem::path darRootPath =
-            "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
-        if (checkForNewFolders(darRootPath, "DAR")) {
-            return false;  // Invalida se encontrar novas pastas DAR
+        // 2. Verificação de Conteúdo e Timestamps
+        for (const auto& [path, timestamp] : currentState) {
+            auto it = manifestMap.find(path);
+            if (it == manifestMap.end()) {
+                SKSE::log::info("Cache inválido: Nova pasta de animação detectada em '{}'.", path);
+                return false;  // Pasta nova encontrada que não estava no manifesto.
+            }
+            if (it->second != timestamp) {
+                SKSE::log::info("Cache inválido: Modificação detectada em '{}'.", path);
+                return false;  // Timestamp da pasta mudou.
+            }
         }
 
+        SKSE::log::info("Cache validado com sucesso.");
         return true;  // Se todas as verificações passaram, o cache é válido!
     }
     // Sua lógica de escaneamento original, agora refatorada para também construir e salvar o cache.
     void AnimationManager::PerformFullScanAndSaveCache() {
         _allMods.clear();
         _darSubMovesets.clear();
-        std::vector<ManifestEntry> manifest;
-        std::set<std::filesystem::path> processedPaths;  // Para evitar processamento duplicado
 
         // --- Escaneamento OAR ---
         auto processModDirectory = [&](const std::filesystem::path& rootPath) {
             if (!std::filesystem::exists(rootPath)) return;
-
+            // Itera para encontrar pastas que são a raiz de um "mod" (contêm config.json)
             for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
-                // A sua lógica de identificação de mod (config.json) parece estar em ProcessTopLevelMod
-                // Vamos manter isso, mas adicionar a pasta ao manifesto corretamente
                 if (entry.is_directory() && std::filesystem::exists(entry.path() / "config.json")) {
+                    // Verificamos se a pasta pai também tem um config.json. Se tiver, esta é uma sub-animação, não um
+                    // mod raiz.
+                    std::filesystem::path parentPath = entry.path().parent_path();
+                    if (parentPath != rootPath && std::filesystem::exists(parentPath / "config.json")) {
+                        continue;  // Pula sub-animações, ProcessTopLevelMod cuidará delas
+                    }
                     ProcessTopLevelMod(entry.path());
                 }
             }
@@ -5917,7 +5969,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         processModDirectory(oarRootPath);
 
         // --- Escaneamento DAR ---
-        ScanDarAnimations();
+        ScanDarAnimations();  // Sua função original que popula _darSubMovesets
         if (!_darSubMovesets.empty()) {
             AnimationModDef darModDef;
             darModDef.name = "[DAR] Animations";
@@ -5926,40 +5978,25 @@ void AnimationManager::LoadGameDataForNpcRules() {
             _allMods.push_back(darModDef);
         }
 
-        // --- Construção do Manifesto (após _allMods ser populado) ---
-        for (const auto& mod : _allMods) {
-            for (const auto& subAnim : mod.subAnimations) {
-                // O path em SubAnimationDef é o DIRETÓRIO da animação, que é o que queremos rastrear
-                std::filesystem::path directoryToTrack = subAnim.path;
-                if (std::filesystem::is_regular_file(directoryToTrack)) {
-                    directoryToTrack = directoryToTrack.parent_path();
-                }
-
-                if (auto modTime = GetFileTime(directoryToTrack)) {
-                    // --- CORREÇÃO AQUI ---
-                    // ANTES: manifest.push_back({entry.path().string(), *modTime});
-                    // DEPOIS: Usamos a função segura para garantir que o path seja armazenado como UTF-8
-                    manifest.push_back({PathToUTF8(directoryToTrack), *modTime});
-                }
-            }
-        }
-
         SKSE::log::info("Escaneamento completo finalizado. {} mods carregados.", _allMods.size());
-        SaveAnimationLibraryCache(manifest);
+
+        // --- Construção e Salvamento do Manifesto ---
+        // A fonte da verdade agora é a função que lê o disco diretamente.
+        std::map<std::string, int64_t> newManifestData = GetCurrentAnimationState();
+        SaveAnimationLibraryCache(newManifestData);
     }
 
     // Salva o estado atual da biblioteca e o manifesto no arquivo de cache.
-    void AnimationManager::SaveAnimationLibraryCache(const std::vector<ManifestEntry>& manifest) {
+    void AnimationManager::SaveAnimationLibraryCache(const std::map<std::string, int64_t>& manifest) {
         const std::filesystem::path cachePath = "Data/SKSE/Plugins/CycleMovesets/CMF_Cache.json";
         try {
-            // Garante que o diretório pai do arquivo de cache exista.
             if (!std::filesystem::exists(cachePath.parent_path())) {
                 std::filesystem::create_directories(cachePath.parent_path());
                 SKSE::log::info("Diretório de cache criado em: {}", PathToUTF8(cachePath.parent_path()));
             }
         } catch (const std::filesystem::filesystem_error& e) {
             SKSE::log::error("Falha ao criar o diretório de cache: {}", e.what());
-            return;  // Aborta o salvamento se não conseguir criar a pasta.
+            return;
         }
 
         rapidjson::StringBuffer sb;
@@ -5970,12 +6007,12 @@ void AnimationManager::LoadGameDataForNpcRules() {
         // Salva o Manifesto
         writer.Key("manifest");
         writer.StartArray();
-        for (const auto& entry : manifest) {
+        for (const auto& [path, timestamp] : manifest) {
             writer.StartObject();
             writer.Key("path");
-            writer.String(entry.path.c_str());
+            writer.String(path.c_str());
             writer.Key("last_modified");
-            writer.Int64(entry.last_modified);
+            writer.Int64(timestamp);
             writer.EndObject();
         }
         writer.EndArray();
@@ -5984,7 +6021,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         writer.Key("library");
         writer.StartArray();
         for (const auto& modDef : _allMods) {
-            ToJson(writer, modDef);
+            ToJson(writer, modDef);  // Sua função ToJson existente
         }
         writer.EndArray();
 
@@ -5995,9 +6032,9 @@ void AnimationManager::LoadGameDataForNpcRules() {
         if (ofs) {
             ofs << sb.GetString();
             ofs.close();
-            SKSE::log::info("Novo cache da biblioteca de animações salvo em '{}'.", cachePath.string());
+            SKSE::log::info("Novo cache da biblioteca de animações salvo em '{}'.", PathToUTF8(cachePath));
         } else {
-            SKSE::log::error("Falha ao salvar o cache da biblioteca em '{}'.", cachePath.string());
+            SKSE::log::error("Falha ao salvar o cache da biblioteca em '{}'.", PathToUTF8(cachePath));
         }
     }
 
@@ -6138,4 +6175,76 @@ void AnimationManager::DrawPerkSelectorPopup() {
         }
     }
 
+RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
+        // Pega a interface de usuário (UI) do jogo
+        if (const auto ui = RE::UI::GetSingleton()) {
+            // 1. VERIFICA SE O MENU DO CONTÊINER ESTÁ ABERTO
+            if (const auto menu_c = ui->GetMenu<RE::ContainerMenu>()) {
+                if (const auto a_itemList = menu_c->GetRuntimeData().itemList) {
+                    if (const auto item = a_itemList->GetSelectedItem()) {
+                        // Retorna os dados do item selecionado
+                        return item->data.objDesc;
+                    }
+                }
+            }
+            // 2. SE NÃO, VERIFICA SE O MENU DO INVENTÁRIO DO JOGADOR ESTÁ ABERTO
+            else if (const auto menu_i = ui->GetMenu<RE::InventoryMenu>()) {
+                if (const auto a_itemList = menu_i->GetRuntimeData().itemList) {
+                    if (const auto item = a_itemList->GetSelectedItem()) {
+                        // Retorna os dados do item selecionado
+                        return item->data.objDesc;
+                    }
+                }
+            }
+            // 3. SE NÃO, VERIFICA SE O MENU DE FAVORITOS ESTÁ ABERTO (lógica um pouco diferente)
+            else if (const auto menu_f = ui->GetMenu<RE::FavoritesMenu>()) {
+                RE::GFxValue selectedIndex;
+                const auto& runtime_data = menu_f->GetRuntimeData();
+                if (runtime_data.root.GetMember("selectedIndex", &selectedIndex) && selectedIndex.IsNumber()) {
+                    const std::int32_t selected_index = static_cast<std::int32_t>(selectedIndex.GetNumber());
+                    const auto& items = runtime_data.favorites;
+                    if (selected_index >= 0 && static_cast<uint32_t>(selected_index) < items.size()) {
+                        // Retorna os dados do item selecionado no menu de favoritos
+                        return items[selected_index].entryData;
+                    }
+                }
+            }
+        }
 
+        // Se nenhum menu relevante estiver aberto ou nenhum item estiver selecionado, retorna nulo
+        return nullptr;
+    }
+
+    void Hooks::Install() {
+
+        auto& trampoline = SKSE::GetTrampoline();
+        constexpr size_t size_per_hook = 14;
+        constexpr size_t NUM_TRAMPOLINE_HOOKS = 3;
+        trampoline.create(size_per_hook * NUM_TRAMPOLINE_HOOKS);
+
+        const REL::Relocation<std::uintptr_t> function{REL::RelocationID(51019, 51897)};
+        InventoryHoverHook::originalFunction =
+            trampoline.write_call<5>(function.address() + REL::Relocate(0x114, 0x22c), InventoryHoverHook::thunk);
+    }
+
+int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
+        if (is_open.load()) {
+    #ifdef GetObject
+    #undef GetObject
+    #endif
+            if (const auto a_bound = a1->GetObject()) {
+                if (a_bound->IsWeapon()) {
+                    logger::info("Mostrando prompt de arma para {}", a_bound->GetName());
+                    GlobalControl::EquipMenu::GetSingleton()->Show(a_bound);
+                } else {
+                    // Em vez de 'RemovePrompt', chamamos nossa função 'Hide'
+                    GlobalControl::EquipMenu::GetSingleton()->Hide();
+                }
+            } else {
+                // Se não houver objeto, garantimos que os prompts estão escondidos
+                GlobalControl::EquipMenu::GetSingleton()->Hide();
+            }
+        }
+
+        return originalFunction(a1);
+    }

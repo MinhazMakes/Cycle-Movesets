@@ -372,11 +372,13 @@ private:
     // Função auxiliar para obter o tempo de modificação de um arquivo/pasta
     std::optional<int64_t> GetFileTime(const std::filesystem::path& path);
 
+    std::map<std::string, int64_t> GetCurrentAnimationState();
+
     // As novas funções principais da lógica de cache
     void LoadAnimationLibrary();
-    bool ValidateCache(const std::filesystem::path& cachePath, std::vector<ManifestEntry>& outManifest);
+    bool ValidateCache(const std::filesystem::path& cachePath);
     void PerformFullScanAndSaveCache();
-    void SaveAnimationLibraryCache(const std::vector<ManifestEntry>& manifest);
+    void SaveAnimationLibraryCache(const std::map<std::string, int64_t>& manifest);
 
     void AddHasPerkCondition(rapidjson::Value& conditionsArray, const std::string& plugin, RE::FormID formID,
                              rapidjson::Document::AllocatorType& allocator);
@@ -394,6 +396,7 @@ private:
     ModInstance* _movesetToEditPerk = nullptr;
     SubAnimationInstance* _subMovesetToEditPerk = nullptr;
     char _perkFilter[128] = "";
+
 };
 
 struct FileSaveConfig {

@@ -30,7 +30,7 @@ namespace GlobalControl {
             return index == other.index && priority == other.priority;
         }
     };
-    
+
     inline bool g_isPlayerInCombat = false;
     inline int g_currentStance = 0;
     inline int g_currentMoveset = 0;
@@ -38,6 +38,7 @@ namespace GlobalControl {
     // ID do nosso plugin com a API SkyPrompt
     inline SkyPromptAPI::ClientID g_clientID = 0;
     inline SkyPromptAPI::ClientID MenuShowing = 0;
+    inline SkyPromptAPI::ClientID Dynamicgrip = 0;
     inline bool g_isWeaponDrawn = false;
     inline bool Cycleopen = false;
     inline bool MovesetChangesOpen = false;
@@ -89,6 +90,9 @@ namespace GlobalControl {
 
     inline SkyPromptAPI::Prompt moveset_back(MovesetBackText, 2, 0, SkyPromptAPI::PromptType::kSinglePress, 20,
                                              Back_key);
+    inline SkyPromptAPI::Prompt Left_Hand("Left hand", 0, 0, SkyPromptAPI::PromptType::kSinglePress, 0, Stances_menu);
+
+    inline SkyPromptAPI::Prompt Right_Hand("Right Hand", 1, 0, SkyPromptAPI::PromptType::kSinglePress, 0, Moveset_menu);
 
     
     // A definimos como 'inline' aqui mesmo para simplificar e evitar problemas de linker.
@@ -123,6 +127,30 @@ namespace GlobalControl {
         // Um array para guardar todos os nossos prompts
         std::array<SkyPromptAPI::Prompt, 1> prompts = {menu_stance};
         
+    };
+    class EquipMenu final : public SkyPromptAPI::PromptSink, public clib_util::singleton::ISingleton<EquipMenu> {
+    public:
+        // Retorna a lista de prompts que queremos monitorar
+        std::span<const SkyPromptAPI::Prompt> GetPrompts() const override; 
+        mutable SkyPromptAPI::Prompt Left_Hand{"Left hand", 0, 0, SkyPromptAPI::PromptType::kSinglePress};
+        mutable SkyPromptAPI::Prompt Right_Hand{"Right Hand", 1, 0, SkyPromptAPI::PromptType::kSinglePress};
+        mutable std::array<SkyPromptAPI::Prompt, 2> prompts = {Left_Hand, Right_Hand};
+        // Função chamada quando um evento (ex: pressionar tecla) ocorre
+        void ProcessEvent(SkyPromptAPI::PromptEvent event) const override;
+        mutable bool except = false;
+        // void UpdatePrompts() { prompts[0] = menu_stance; }
+        void Show(const RE::TESBoundObject* a_weapon) const;
+        void Hide() const;
+
+    private:
+        // Um array para guardar todos os nossos prompts
+    };
+    class EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent>,
+                           public clib_util::singleton::ISingleton<EquipEventSink> {
+    public:
+        // A função que será chamada sempre que um item for equipado
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event,
+                                              RE::BSTEventSource<RE::TESEquipEvent>*) override;
     };
 
     class StancesChangesSink final : public SkyPromptAPI::PromptSink,
@@ -320,7 +348,7 @@ namespace GlobalControl {
     bool ShouldShowPrompts();
     void UpdatePromptVisibility();
     class InputListener : public RE::BSTEventSink<RE::InputEvent*> {
-public:
+    public:
     // Singleton para garantir que exista apenas uma instância
     static InputListener* GetSingleton() {
         static InputListener singleton;

@@ -5,7 +5,8 @@
 #include <string>
 #include "SKSEMCP/SKSEMenuFramework.hpp"
 
-// Namespace para organizar as configurações do seu mod
+
+
 namespace Settings {
     // Variável para armazenar nossa hotkey.
     // Ação "Stance Menu"
@@ -232,4 +233,24 @@ namespace MyMenu {
 namespace GlobalInputCapture {
     // Ponteiro para a variável de hotkey que estamos tentando definir
     inline int* g_target_gamepad_key_ptr = nullptr;
+}
+
+namespace Hooks {
+    inline RE::BGSEquipSlot* g_leftHandSlot = nullptr;
+    inline RE::BGSEquipSlot* g_rightHandSlot = nullptr;
+    inline RE::BGSEquipSlot* g_twoHandSlot = nullptr;
+    inline RE::BGSKeyword* g_weapTypeSword = nullptr;
+    inline RE::BGSKeyword* g_weapTypeGreatsword = nullptr;
+    inline RE::BGSKeyword* g_weapTypeWarAxe = nullptr;
+    inline RE::BGSKeyword* g_weapTypeBattleaxe = nullptr;
+    inline RE::BGSKeyword* g_weapTypeWarhammer = nullptr;
+
+    // Função auxiliar para obter o item selecionado no menu (inspirado no Containerize)
+    RE::InventoryEntryData* GetSelectedEntryInMenu();
+    void Install();
+    inline std::atomic_bool is_open = false;
+    struct InventoryHoverHook {
+        static int64_t thunk(RE::InventoryEntryData* a1);
+        static inline REL::Relocation<decltype(thunk)> originalFunction;
+    };
 }

@@ -27,7 +27,8 @@ struct SubAnimationDef {
     bool hasIdle = false;      // Presença de arquivos "idle"
     bool hasAnimations = false;
     DPATags dpaTags;
-    bool hasCPA = false;  
+    bool hasCPA = false; 
+    std::filesystem::path triggerFile;
 };
 struct AnimationModDef {
     std::string name;

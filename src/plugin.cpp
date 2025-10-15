@@ -85,11 +85,36 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         } else {
             SKSE::log::error("Falha ao obter um ClientID da SkyPromptAPI. A API esta instalada?");
         }
+        GlobalControl::Dynamicgrip = SkyPromptAPI::RequestClientID();
+        if (GlobalControl::Dynamicgrip > 0) {
+            SKSE::log::info("ClientID {} recebido da SkyPromptAPI.", GlobalControl::MenuShowing);
+            if (!SkyPromptAPI::RequestTheme(GlobalControl::MenuShowing, "Cycle Movesets")) {
+			    logger::error("Falha ao solicitar o tema 'Cycle Movesets' na SkyPromptAPI.");
+            }
+        } else {
+            SKSE::log::error("Falha ao obter um ClientID da SkyPromptAPI. A API esta instalada?");
+        }
+        if (auto sourceHolder = RE::ScriptEventSourceHolder::GetSingleton()) {
+            sourceHolder->AddEventSink<RE::TESEquipEvent>(GlobalControl::EquipEventSink::GetSingleton());
+            logger::info("Equip event sink registrado.");
+        }
         AnimationManager::GetSingleton()->PopulateNpcList();
         AnimationManager::GetSingleton()->LoadGameDataForNpcRules();
         AnimationManager::GetSingleton()->PopulatePerkList();
+
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        Hooks::g_rightHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f42, "Skyrim.esm");
+        Hooks::g_leftHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f43, "Skyrim.esm");
+        Hooks::g_twoHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f45, "Skyrim.esm");
         
+        Hooks::g_weapTypeSword = dataHandler->LookupForm<RE::BGSKeyword>(0x1E711, "Skyrim.esm");
+        Hooks::g_weapTypeGreatsword = dataHandler->LookupForm<RE::BGSKeyword>(0x6D931, "Skyrim.esm");
+        Hooks::g_weapTypeWarAxe = dataHandler->LookupForm<RE::BGSKeyword>(0x1E712, "Skyrim.esm");
+        Hooks::g_weapTypeBattleaxe = dataHandler->LookupForm<RE::BGSKeyword>(0x6D932, "Skyrim.esm");
+        Hooks::g_weapTypeWarhammer = dataHandler->LookupForm<RE::BGSKeyword>(0x6D930, "Skyrim.esm");
+
     }
+    
 
     if (message->type == SKSE::MessagingInterface::kNewGame || message->type == SKSE::MessagingInterface::kPostLoadGame) {
         WheelerKeys();
@@ -128,7 +153,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
 
     SetupLog();
     logger::info("Plugin loaded");
-    
+    Hooks::Install();
     //AnimationManager::GetSingleton()->SaveAllSettings();
     SKSE::Init(skse);
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
