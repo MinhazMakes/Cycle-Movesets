@@ -24,8 +24,51 @@ bool isTwoHanded(RE::TESForm* a_weap) {
     if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
     return false;
 }
-// NOVA FUNÇÃO PARA TESTE
-// Tenta forçar um NPC a iniciar uma animação de ataque.
+
+bool VerifyDualWieldState(RE::Actor* npc, RE::TESObjectWEAP* expectedRight, RE::TESObjectWEAP* expectedLeft) {
+    if (!npc) return false;
+
+    logger::info("--- Verificando Estado de Equipamento para '{}' ---", npc->GetName());
+
+    bool rightHandOK = false;
+    bool leftHandOK = false;
+
+    // Checa a Mão Direita (isLeftHand = false)
+    auto rightHandObject = npc->GetEquippedObject(false);
+    if (rightHandObject && rightHandObject->IsWeapon()) {
+        auto rightWeapon = rightHandObject->As<RE::TESObjectWEAP>();
+        logger::info("  Mão Direita: Equipado com '{}'. Esperado: '{}'.", rightWeapon->GetName(),
+                     expectedRight->GetName());
+        if (rightWeapon == expectedRight) {
+            logger::info("    -> CORRETO!");
+            rightHandOK = true;
+        } else {
+            logger::error("    -> INCORRETO!");
+        }
+    } else {
+        logger::warn("  Mão Direita: VAZIA ou com item não-arma.");
+    }
+
+    // Checa a Mão Esquerda (isLeftHand = true)
+    auto leftHandObject = npc->GetEquippedObject(true);
+    if (leftHandObject && leftHandObject->IsWeapon()) {
+        auto leftWeapon = leftHandObject->As<RE::TESObjectWEAP>();
+        logger::info("  Mão Esquerda: Equipado com '{}'. Esperado: '{}'.", leftWeapon->GetName(),
+                     expectedLeft->GetName());
+        if (leftWeapon == expectedLeft) {
+            logger::info("    -> CORRETO!");
+            leftHandOK = true;
+        } else {
+            logger::error("    -> INCORRETO!");
+        }
+    } else {
+        logger::warn("  Mão Esquerda: VAZIA ou com item não-arma.");
+    }
+
+    logger::info("--- Verificação Concluída ---");
+
+    return rightHandOK && leftHandOK;
+}
 void ForceNPCToAttack(RE::Actor* npc, bool isPowerAttack = false) {
     if (!npc || !npc->IsInCombat()) {
         logger::warn("ForceNPCToAttack: NPC nulo ou não está em combate. Abortando.");
@@ -107,6 +150,7 @@ void EquipDualTwoHanded_NPC(RE::Actor* actor, RE::TESObjectWEAP* weapon1, RE::TE
 
     auto originalSlot1 = weapon1->GetEquipSlot();
     auto originalSlot2 = weapon2->GetEquipSlot();
+    auto originalType2 = weapon2->GetWeaponType();
 
     // A lógica de enganar o motor continua a mesma
     weapon1->SetEquipSlot(Hooks::g_leftHandSlot);   // Alvo: Mão Direita
@@ -117,6 +161,7 @@ void EquipDualTwoHanded_NPC(RE::Actor* actor, RE::TESObjectWEAP* weapon1, RE::TE
         // 1. Limpa AMBAS as mãos para começar do zero.
         equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, false, false, true);
         equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
+        equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_twoHandSlot, true, false, false, true);
 
         // 2. Equipa a PRIMEIRA arma (mão direita)
         logger::info("Equipping right hand weapon: '{}'", weapon1->GetName());
@@ -127,10 +172,23 @@ void EquipDualTwoHanded_NPC(RE::Actor* actor, RE::TESObjectWEAP* weapon1, RE::TE
         SKSE::GetTaskInterface()->AddTask([=]() {
             logger::info("Equipping left hand weapon: '{}'", weapon2->GetName());
             equipManager->EquipObject(actor, weapon2, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
+            SKSE::GetTaskInterface()->AddTask([=]() {
+                // Não precisamos de um sleep aqui, pois esta tarefa só roda após as outras.
+                // Mas um pequeno delay pode ajudar a garantir que as animações se assentem.
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                weapon2->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+                bool isEquippedCorrectly = VerifyDualWieldState(actor, weapon1, weapon2);
 
-          
+                if (isEquippedCorrectly) {
+                    logger::info("Verificação de equipamento bem-sucedida. Forçando o ataque.");
+                    ForceNPCToAttack(actor, false);
+                } else {
+                    logger::warn("Falha na verificação de equipamento após tentativa. Abortando ataque.");
+                }
+            });
         });
     });
+
     // --- FIM DA CORREÇÃO ---
 }
 
@@ -183,15 +241,6 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         // Chame a nova função centralizada em vez de duas chamadas separadas
         EquipDualTwoHanded_NPC(npc, weapon1, weapon2);
         npc->SetGraphVariableInt("CycleMovesetNpcType", 1);  
-
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            // Espera um pequeno delay (ex: 500ms) antes de forçar o ataque
-            // para garantir que o estado de equipamento foi totalmente atualizado.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-            // Força um ataque normal. Mude para 'true' para testar um ataque poderoso.
-            ForceNPCToAttack(npc, false);
-        });
 
     } else {
         logger::info("  - Check FAILED: Not enough suitable weapons in inventory.");
@@ -1485,7 +1534,7 @@ RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::T
                                                                      RE::BSTEventSource<RE::TESEquipEvent>*) {
     // Só nos importamos com eventos do jogador e quando ele está EQUIPANDO algo
     auto player = RE::PlayerCharacter::GetSingleton();
-    if (!a_event || a_event->actor || !a_event->equipped) {
+    if (!a_event || a_event->actor.get() != player || !a_event->equipped) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
