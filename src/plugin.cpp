@@ -113,6 +113,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Hooks::g_weapTypeBattleaxe = dataHandler->LookupForm<RE::BGSKeyword>(0x6D932, "Skyrim.esm");
         Hooks::g_weapTypeWarhammer = dataHandler->LookupForm<RE::BGSKeyword>(0x6D930, "Skyrim.esm");
         Hooks::g_canDualWieldTwoHandedKeyword = dataHandler->LookupForm<RE::BGSKeyword>(0x800, "CMF.esp");
+        Hooks::g_isActivelyDualWieldingKeyword = dataHandler->LookupForm<RE::BGSKeyword>(0x801, "CMF.esp");
 
     }
     

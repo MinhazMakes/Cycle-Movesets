@@ -245,6 +245,7 @@ namespace Hooks {
     inline RE::BGSKeyword* g_weapTypeBattleaxe = nullptr;
     inline RE::BGSKeyword* g_weapTypeWarhammer = nullptr;
     inline RE::BGSKeyword* g_canDualWieldTwoHandedKeyword = nullptr;
+    inline RE::BGSKeyword* g_isActivelyDualWieldingKeyword = nullptr;
 
     // Função auxiliar para obter o item selecionado no menu (inspirado no Containerize)
     RE::InventoryEntryData* GetSelectedEntryInMenu();
