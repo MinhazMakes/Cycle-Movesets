@@ -16,6 +16,147 @@ struct MatchResult {
     const WeaponCategory* category = nullptr;
     int score = -1;  // Pontuação de especificidade
 };
+
+bool isTwoHanded(RE::TESForm* a_weap) {
+    if (!a_weap || !a_weap->IsWeapon()) return false;
+    auto weap = a_weap->As<RE::TESObjectWEAP>();
+    // No dynamicGrip, isso inclui espadas e machados de duas mãos.
+    if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
+    return false;
+}
+void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
+    if (!actor || !item || !targetSlot) return;
+
+    auto equipManager = RE::ActorEquipManager::GetSingleton();
+    if (!equipManager) return;
+
+    if (item->IsWeapon() && isTwoHanded(item)) {
+        auto weapon = item->As<RE::TESObjectWEAP>();
+        auto originalSlot = weapon->GetEquipSlot();
+
+        // A lógica para enganar o motor do jogo continua a mesma
+        RE::BGSEquipSlot* tempSlot =
+            (targetSlot == Hooks::g_rightHandSlot) ? Hooks::g_leftHandSlot : Hooks::g_rightHandSlot;
+        weapon->SetEquipSlot(tempSlot);
+
+        SKSE::GetTaskInterface()->AddTask([=]() {
+            // --- INÍCIO DA CORREÇÃO ---
+            // Em vez de limpar apenas a mão oposta, vamos limpar AMBAS as mãos
+            // para garantir que o personagem esteja pronto para equipar uma arma de 2H,
+            // mesmo que seja em um único slot.
+
+            // 1. Desequipa o que estiver na mão direita.
+            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, false, false, true);
+            // 2. Desequipa o que estiver na mão esquerda.
+            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
+
+            // --- FIM DA CORREÇÃO ---
+
+            // Agora, com as mãos garantidamente vazias, equipamos nosso item no slot alvo.
+            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
+
+            // Forçamos a atualização da UI
+            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
+
+            // Agendamos a restauração do slot original da arma
+            SKSE::GetTaskInterface()->AddTask([=]() {
+                if (auto form = RE::TESForm::LookupByID(item->GetFormID())) {
+                    if (auto weapToRestore = form->As<RE::TESObjectWEAP>()) {
+                        weapToRestore->SetEquipSlot(originalSlot);
+                    }
+                }
+            });
+        });
+    } else {
+        // Para armas de uma mão, a lógica padrão do jogo deve funcionar,
+        // mas para garantir, podemos também limpar o slot alvo antes.
+        SKSE::GetTaskInterface()->AddTask([=]() {
+            // Limpa o slot alvo antes de equipar, garantindo a substituição.
+            equipManager->UnequipObject(actor, nullptr, nullptr, 1, targetSlot, true, false, false, true);
+            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
+            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
+        });
+    }
+}
+
+void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
+    // 1. Validações Iniciais
+    if (!npc || npc->IsPlayer() || !Hooks::g_canDualWieldTwoHandedKeyword) {
+        // Adicionamos um log aqui caso a keyword não tenha sido carregada, um erro comum.
+        if (!Hooks::g_canDualWieldTwoHandedKeyword) {
+            logger::warn("Check failed: The Dual Wield Keyword is not loaded!");
+        }
+        return;
+    }
+
+    // Log de início de verificação
+    logger::info("-> Running checks for '{}'", npc->GetName());
+
+    // A condição original era `!npc->IsInCombat()`. Vamos relaxar essa condição para
+    // confiar no estado do evento, mas podemos deixar um log para ver o que a função retorna.
+    logger::info("   - Checking IsInCombat(): {}", npc->IsInCombat());
+
+    // Verificamos a keyword.
+    if (!npc->HasKeyword(Hooks::g_canDualWieldTwoHandedKeyword)) {
+        logger::info("   - Check FAILED: NPC does not have the required keyword.");
+        return;
+    }
+    logger::info("   - Check PASSED: NPC has the keyword.");
+
+    // 2. Prevenção: Já está equipado?
+    auto leftWeaponForm = npc->GetEquippedObject(true);
+    auto rightWeaponForm = npc->GetEquippedObject(false);
+    std::string leftItemName = leftWeaponForm ? leftWeaponForm->GetName() : "None";
+    std::string rightItemName = rightWeaponForm ? rightWeaponForm->GetName() : "None";
+    RE::FormID leftFormID = leftWeaponForm ? leftWeaponForm->GetFormID() : 0;
+    RE::FormID rightFormID = rightWeaponForm ? rightWeaponForm->GetFormID() : 0;
+
+    logger::info("   - Equipment Check: Left Hand='{}' (ID: {:X}), Right Hand='{}' (ID: {:X})", leftItemName,
+                 leftFormID, rightItemName, rightFormID);
+    // --- FIM DOS LOGS DE DEPURAÇÃO ---
+
+    // --- CONDIÇÃO CORRIGIDA ---
+    if (leftWeaponForm && rightWeaponForm &&
+        // AQUI ESTÁ A CORREÇÃO CRÍTICA: garante que os itens são diferentes
+        leftWeaponForm->GetFormID() != rightWeaponForm->GetFormID() &&
+        isTwoHanded(leftWeaponForm->As<RE::TESBoundObject>()) &&
+        isTwoHanded(rightWeaponForm->As<RE::TESBoundObject>())) {
+        logger::info("   - Check FAILED: NPC is already dual wielding two different two-handed weapons.");
+        return;
+    }
+    logger::info("   - Check PASSED: NPC is not currently dual wielding two-handed weapons.");
+
+    // 3. Escanear o inventário
+    std::vector<RE::TESObjectWEAP*> suitableWeapons;
+    auto inventory = npc->GetInventory();
+
+    for (const auto& [item, entry] : inventory) {
+        if (item->IsWeapon() && isTwoHanded(item)) {
+            suitableWeapons.push_back(item->As<RE::TESObjectWEAP>());
+        }
+    }
+
+    logger::info("   - Inventory Scan: Found {} suitable two-handed weapons.", suitableWeapons.size());
+
+    // 4. Ação Final
+    if (suitableWeapons.size() >= 2) {
+        logger::info("   - Check PASSED: Found at least 2 weapons. Proceeding to equip.");
+
+        auto weapon1 = suitableWeapons[0];
+        auto weapon2 = suitableWeapons[1];
+
+        logger::info("   -> Equipping '{}' in Right Hand and '{}' in Left Hand.", weapon1->GetName(),
+                     weapon2->GetName());
+
+        EquipItemWithGripChange(npc, weapon1, Hooks::g_rightHandSlot);
+        EquipItemWithGripChange(npc, weapon2, Hooks::g_leftHandSlot);
+
+        logger::info("   -> EQUIP SUCCEEDED for '{}'", npc->GetName());
+    } else {
+        logger::info("   - Check FAILED: Not enough suitable weapons in inventory.");
+    }
+}
+
 // Esta função é chamada a cada frame de input
 RE::BSEventNotifyControl GlobalControl::InputListener::ProcessEvent(RE::InputEvent* const* a_event,
                                                                     RE::BSTEventSource<RE::InputEvent*>*) {
@@ -918,6 +1059,7 @@ void GlobalControl::NPCrandomNumber(RE::Actor* targetActor, const std::string& e
     SKSE::log::info("{} (Ator {:08X}): Escolheu o moveset #{} da prioridade {}", eventSource, formID,
                     chosenMoveset.index, chosenMoveset.priority);
 }
+
 RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE::TESCombatEvent* a_event,
                                                                        RE::BSTEventSource<RE::TESCombatEvent>*) {
     if (!a_event || !a_event->actor) {
@@ -965,9 +1107,14 @@ RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE:
         switch (a_event->newState.get()) {
             case RE::ACTOR_COMBAT_STATE::kCombat:
                 GlobalControl::NpcCombatTracker::RegisterSink(npc);
+                CheckAndEquipDualTwoHandedForNPC(npc);
+                break;
+            case RE::ACTOR_COMBAT_STATE::kSearching:
+                CheckAndEquipDualTwoHandedForNPC(npc);
                 break;
             case RE::ACTOR_COMBAT_STATE::kNone:
                 GlobalControl::NpcCombatTracker::UnregisterSink(npc);
+                CheckAndEquipDualTwoHandedForNPC(npc);
                 break;
         }
     }
@@ -1017,6 +1164,7 @@ void GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants() {
                                 actor->GetName(), actor->GetFormID());
                 // Usamos a mesma função de registro que já existe!
                 RegisterSink(actor);
+                CheckAndEquipDualTwoHandedForNPC(actor);
             }
         }
     }
@@ -1233,81 +1381,8 @@ void GlobalControl::UpdatePromptVisibility() {
 }
 
 std::span<const SkyPromptAPI::Prompt> GlobalControl::EquipMenu::GetPrompts() const { return prompts; }
-bool isTwoHanded(RE::TESForm* a_weap) {
-    if (!a_weap || !a_weap->IsWeapon()) return false;
-    auto weap = a_weap->As<RE::TESObjectWEAP>();
-    // No dynamicGrip, isso inclui espadas e machados de duas mãos.
-    if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
-    return false;
-}
 
-void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
-    if (!actor || !item || !targetSlot) return;
 
-    auto equipManager = RE::ActorEquipManager::GetSingleton();
-    if (!equipManager) return;
-
-    if (item->IsWeapon() && isTwoHanded(item)) {
-        auto weapon = item->As<RE::TESObjectWEAP>();
-        auto originalSlot = weapon->GetEquipSlot();
-
-        // A lógica para enganar o motor do jogo continua a mesma
-        RE::BGSEquipSlot* tempSlot =
-            (targetSlot == Hooks::g_rightHandSlot) ? Hooks::g_leftHandSlot : Hooks::g_rightHandSlot;
-        weapon->SetEquipSlot(tempSlot);
-
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            // --- INÍCIO DA CORREÇÃO DE TIPO ---
-
-            // 1. Pega o FORM equipado na mão direita.
-            if (auto rightHandForm = actor->GetEquippedObject(false)) {
-                // 2. Converte (faz o cast) de TESForm* para TESBoundObject*.
-                if (auto rightHandObject = rightHandForm->As<RE::TESBoundObject>()) {
-                    // 3. Agora sim, desequipa o objeto com o tipo correto.
-                    equipManager->UnequipObject(actor, rightHandObject, nullptr, 1, Hooks::g_rightHandSlot, true, false,
-                                                false, true);
-                }
-            }
-
-            // 4. Repete o processo para a mão esquerda.
-            if (auto leftHandForm = actor->GetEquippedObject(true)) {
-                if (auto leftHandObject = leftHandForm->As<RE::TESBoundObject>()) {
-                    equipManager->UnequipObject(actor, leftHandObject, nullptr, 1, Hooks::g_leftHandSlot, true, false,
-                                                false, true);
-                }
-            }
-            // --- FIM DA CORREÇÃO ---
-
-            // Agora, com as mãos garantidamente vazias, equipamos nosso item no slot alvo.
-            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
-
-            // Forçamos a atualização da UI
-            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
-
-            // Agendamos a restauração do slot original da arma
-            SKSE::GetTaskInterface()->AddTask([=]() {
-                if (auto form = RE::TESForm::LookupByID(item->GetFormID())) {
-                    if (auto weapToRestore = form->As<RE::TESObjectWEAP>()) {
-                        weapToRestore->SetEquipSlot(originalSlot);
-                    }
-                }
-            });
-        });
-    } else {
-        // Para itens de uma mão, também aplicamos a lógica correta.
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            if (auto currentFormInSlot = actor->GetEquippedObject(targetSlot == Hooks::g_leftHandSlot)) {
-                if (auto currentObjectInSlot = currentFormInSlot->As<RE::TESBoundObject>()) {
-                    equipManager->UnequipObject(actor, currentObjectInSlot, nullptr, 1, targetSlot, true, false, false,
-                                                true);
-                }
-            }
-
-            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
-            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
-        });
-    }
-}
 
 void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
     if (event.type != SkyPromptAPI::PromptEventType::kAccepted) {
@@ -1375,6 +1450,7 @@ RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::T
     if (!a_event || a_event->actor.get() != player || !a_event->equipped) {
         return RE::BSEventNotifyControl::kContinue;
     }
+
 
     // Acessa o inventário do jogador para ver o que está realmente equipado
     if (auto invChanges = player->GetInventoryChanges()) {

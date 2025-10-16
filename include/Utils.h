@@ -16,7 +16,6 @@ namespace GlobalControl {
 
     // Ponteiro para a variável global, será preenchido quando o jogo carregar
     //inline RE::TESGlobal* g_targetGlobal = nullptr;
-
     struct MovesetCandidate {
         int index;     // O índice original do moveset (1, 2, 3...)
         int priority;  // A prioridade da regra de onde ele veio (0, 1, 2...)

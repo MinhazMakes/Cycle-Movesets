@@ -6248,3 +6248,5 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
 
         return originalFunction(a1);
     }
+
+
