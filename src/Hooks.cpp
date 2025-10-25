@@ -32,154 +32,174 @@ std::string PathToUTF8(const std::filesystem::path& path) {
         }
     }
 
-    void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
+void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         SKSE::log::info("Processando CycleDar.json em: {}", cycleDarJsonPath.string());
         try {
-        // 1. Abre e lê o arquivo JSON
-        std::ifstream fileStream(cycleDarJsonPath);
-        if (!fileStream) {
-            SKSE::log::error("Falha ao abrir {}", cycleDarJsonPath.string());
-            return;
-        }
-        std::string jsonContent((std::istreambuf_iterator<char>(fileStream)), std::istreambuf_iterator<char>());
-        fileStream.close();
+            // 1. Abre e lê o arquivo JSON
+            std::ifstream fileStream(cycleDarJsonPath);
+            if (!fileStream) {
+                SKSE::log::error("Falha ao abrir {}", cycleDarJsonPath.string());
+                return;
+            }
+            std::string jsonContent((std::istreambuf_iterator<char>(fileStream)), std::istreambuf_iterator<char>());
+            fileStream.close();
 
-        // 2. Faz o parse do JSON
-        rapidjson::Document doc;
-        doc.Parse(jsonContent.c_str());
+            // 2. Faz o parse do JSON
+            rapidjson::Document doc;
+            doc.Parse(jsonContent.c_str());
 
-        if (doc.HasParseError()) {
-            SKSE::log::error("Erro no parse do JSON em {}", cycleDarJsonPath.string());
-            return;
-        }
-
-        // 3. Verifica se a conversão já foi feita
-        if (doc.HasMember("conversionDone") && doc["conversionDone"].IsBool() && doc["conversionDone"].GetBool()) {
-            SKSE::log::info("A cópia para {} já foi concluída anteriormente. Pulando.", cycleDarJsonPath.string());
-            return;
-        }
-
-        int filesCopied = 0;
-        std::filesystem::path destinationPath = cycleDarJsonPath.parent_path();
-
-        // NOVA LÓGICA DE PROCESSAMENTO DE FONTES MÚLTIPLAS
-        auto processSource = [&](const std::string& relativePath, const rapidjson::Value* filesToCopyArray) {
-            std::filesystem::path sourcePath = "Data" / std::filesystem::path(relativePath);
-            if (!std::filesystem::exists(sourcePath) || !std::filesystem::is_directory(sourcePath)) {
-                SKSE::log::warn("Pasta de origem não existe ou não é um diretório: {}", sourcePath.string());
+            if (doc.HasParseError()) {
+                SKSE::log::error("Erro no parse do JSON em {}", cycleDarJsonPath.string());
                 return;
             }
 
-            SKSE::log::info("Copiando arquivos de '{}' para '{}'", sourcePath.string(), destinationPath.string());
+            bool jsonDirty = false;  // Flag para saber se precisamos salvar o JSON
 
-            if (filesToCopyArray && filesToCopyArray->IsArray() && !filesToCopyArray->Empty()) {
-                // Modo: Copia arquivos especificados na lista
-                SKSE::log::info("Modo: Copiando arquivos especificados na lista 'filesToCopy'.");
-                for (const auto& fileValue : filesToCopyArray->GetArray()) {
-                    if (fileValue.IsString()) {
-                        std::filesystem::path sourceFile = sourcePath / fileValue.GetString();
-                        if (std::filesystem::exists(sourceFile)) {
-                            CopySingleFile(sourceFile, destinationPath, filesCopied);
-                        } else {
-                            SKSE::log::warn("Arquivo especificado não encontrado na origem: {}", sourceFile.string());
+            // --- Bloco 1: Lógica de Conversão BFCO (Sempre checa) ---
+            bool shouldConvertToBFCO = false;
+            if (doc.HasMember("convertBFCO") && doc["convertBFCO"].IsBool()) {
+                shouldConvertToBFCO = doc["convertBFCO"].GetBool();
+            }
+
+            if (shouldConvertToBFCO) {
+                SKSE::log::info("Iniciando conversão de MCO para BFCO em: {}", cycleDarJsonPath.string());
+                int filesRenamed = 0;
+                std::filesystem::path destinationPath = cycleDarJsonPath.parent_path();
+                for (const auto& fileEntry : std::filesystem::directory_iterator(destinationPath)) {
+                    if (fileEntry.is_regular_file()) {
+                        std::string filename = fileEntry.path().filename().string();
+                        std::string lower_filename = filename;
+                        // 2. Converte a cópia para minúsculas.
+                        std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+
+                        // CORREÇÃO: Pula arquivos "dodge"
+                        if (lower_filename.rfind("mco_", 0) == 0 && lower_filename.find("dodge") == std::string::npos) {
+                            std::string newFilename = filename;
+                            newFilename.replace(0, 4, "BFCO_");
+                            std::filesystem::path newFilePath = destinationPath / newFilename;
+                            try {
+                                std::filesystem::rename(fileEntry.path(), newFilePath);
+                                filesRenamed++;
+                            } catch (const std::filesystem::filesystem_error& e) {
+                                SKSE::log::error("Falha ao renomear {} para {}. Erro: {}", fileEntry.path().string(),
+                                                 newFilePath.string(), e.what());
+                            }
                         }
                     }
+                }
+                SKSE::log::info("Conversão BFCO concluída. {} arquivos renomeados.", filesRenamed);
+
+                // Desliga a flag no JSON para não rodar de novo
+                doc["convertBFCO"].SetBool(false);
+                jsonDirty = true;
+            }
+
+            // --- Bloco 2: Lógica de Cópia (Sources/pathDar) ---
+            bool copyDone = false;
+            if (doc.HasMember("conversionDone") && doc["conversionDone"].IsBool() && doc["conversionDone"].GetBool()) {
+                copyDone = true;
+            }
+
+            if (!copyDone) {
+                int filesCopied = 0;
+                std::filesystem::path destinationPath = cycleDarJsonPath.parent_path();
+
+                // Função auxiliar (igual à original)
+                auto processSource = [&](const std::string& relativePath, const rapidjson::Value* filesToCopyArray) {
+                    std::filesystem::path sourcePath = "Data" / std::filesystem::path(relativePath);
+                    if (!std::filesystem::exists(sourcePath) || !std::filesystem::is_directory(sourcePath)) {
+                        SKSE::log::warn("Pasta de origem não existe ou não é um diretório: {}", sourcePath.string());
+                        return;
+                    }
+                    SKSE::log::info("Copiando arquivos de '{}' para '{}'", sourcePath.string(),
+                                    destinationPath.string());
+                    if (filesToCopyArray && filesToCopyArray->IsArray() && !filesToCopyArray->Empty()) {
+                        SKSE::log::info("Modo: Copiando arquivos especificados na lista 'filesToCopy'.");
+                        for (const auto& fileValue : filesToCopyArray->GetArray()) {
+                            if (fileValue.IsString()) {
+                                std::filesystem::path sourceFile = sourcePath / fileValue.GetString();
+                                if (std::filesystem::exists(sourceFile)) {
+                                    CopySingleFile(sourceFile, destinationPath, filesCopied);
+                                } else {
+                                    SKSE::log::warn("Arquivo especificado não encontrado na origem: {}",
+                                                    sourceFile.string());
+                                }
+                            }
+                        }
+                    } else {
+                        SKSE::log::info("Modo: Copiando todos os arquivos .hkx da pasta.");
+                        for (const auto& fileEntry : std::filesystem::directory_iterator(sourcePath)) {
+                            if (fileEntry.is_regular_file()) {
+                                std::string extension = fileEntry.path().extension().string();
+                                std::transform(extension.begin(), extension.end(), extension.begin(),
+                                               [](unsigned char c) { return std::tolower(c); });
+                                if (extension == ".hkx") {
+                                    CopySingleFile(fileEntry.path(), destinationPath, filesCopied);
+                                }
+                            }
+                        }
+                    }
+                };
+
+                bool copyAttempted = false;
+                if (doc.HasMember("sources") && doc["sources"].IsArray()) {
+                    copyAttempted = true;
+                    for (const auto& sourceObj : doc["sources"].GetArray()) {
+                        if (sourceObj.IsObject() && sourceObj.HasMember("path") && sourceObj["path"].IsString()) {
+                            const rapidjson::Value* filesArray =
+                                sourceObj.HasMember("filesToCopy") ? &sourceObj["filesToCopy"] : nullptr;
+                            processSource(sourceObj["path"].GetString(), filesArray);
+                        }
+                    }
+                } else if (doc.HasMember("pathDar") && doc["pathDar"].IsString()) {
+                    copyAttempted = true;
+                    const rapidjson::Value* filesArray = doc.HasMember("filesToCopy") ? &doc["filesToCopy"] : nullptr;
+                    processSource(doc["pathDar"].GetString(), filesArray);
+                }
+
+                if (copyAttempted) {
+                    SKSE::log::info("Cópia concluída. {} arquivos movidos.", filesCopied);
+                    // Marca a CÓPIA como feita
+                    if (doc.HasMember("conversionDone")) {
+                        doc["conversionDone"].SetBool(true);
+                    } else {
+                        doc.AddMember("conversionDone", true, doc.GetAllocator());
+                    }
+                    jsonDirty = true;
+                } else if (!shouldConvertToBFCO) {
+                    // Se não tentamos copiar E não tentamos converter, então o arquivo é inútil
+                    SKSE::log::warn("Formato de CycleDar.json inválido ou não reconhecido em {}",
+                                    cycleDarJsonPath.string());
+                    return;  // Retorna sem salvar
                 }
             } else {
-                // Modo: Copia todos os .hkx (comportamento padrão)
-                SKSE::log::info("Modo: Copiando todos os arquivos .hkx da pasta.");
-                for (const auto& fileEntry : std::filesystem::directory_iterator(sourcePath)) {
-                    if (fileEntry.is_regular_file()) {
-                        std::string extension = fileEntry.path().extension().string();
-                        std::transform(extension.begin(), extension.end(), extension.begin(),
-                                       [](unsigned char c) { return std::tolower(c); });
-                        if (extension == ".hkx") {
-                            CopySingleFile(fileEntry.path(), destinationPath, filesCopied);
-                        }
-                    }
-                }
+                SKSE::log::info("A cópia para {} já foi concluída anteriormente. Pulando.", cycleDarJsonPath.string());
             }
-        };
 
-        if (doc.HasMember("sources") && doc["sources"].IsArray()) {
-            // NOVO FORMATO: Processa o array "sources"
-            for (const auto& sourceObj : doc["sources"].GetArray()) {
-                if (sourceObj.IsObject() && sourceObj.HasMember("path") && sourceObj["path"].IsString()) {
-                    const rapidjson::Value* filesArray =
-                        sourceObj.HasMember("filesToCopy") ? &sourceObj["filesToCopy"] : nullptr;
-                    processSource(sourceObj["path"].GetString(), filesArray);
+            // --- Bloco 3: Salvar JSON (se necessário) ---
+            if (jsonDirty) {
+                rapidjson::StringBuffer buffer;
+                rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                doc.Accept(writer);
+
+                std::ofstream outFile(cycleDarJsonPath);
+                if (!outFile) {
+                    SKSE::log::error("Falha ao abrir {} para escrita!", cycleDarJsonPath.string());
+                    return;
                 }
+
+                outFile << buffer.GetString();
+                outFile.close();
+                SKSE::log::info("Arquivo JSON {} atualizado com sucesso.", cycleDarJsonPath.string());
             }
-        } else if (doc.HasMember("pathDar") && doc["pathDar"].IsString()) {
-            // FORMATO ANTIGO (LEGADO): Para manter compatibilidade
-            const rapidjson::Value* filesArray = doc.HasMember("filesToCopy") ? &doc["filesToCopy"] : nullptr;
-            processSource(doc["pathDar"].GetString(), filesArray);
-        } else {
-            SKSE::log::error("Formato de CycleDar.json inválido ou não reconhecido em {}", cycleDarJsonPath.string());
-            return;
-        }
 
-        SKSE::log::info("Cópia concluída. {} arquivos movidos.", filesCopied);
-
-        // Lógica de conversão para BFCO (inalterada)
-        bool shouldConvertToBFCO = false;
-        if (doc.HasMember("convertBFCO") && doc["convertBFCO"].IsBool()) {
-            shouldConvertToBFCO = doc["convertBFCO"].GetBool();
-        }
-
-        if (shouldConvertToBFCO) {
-            SKSE::log::info("Iniciando conversão de MCO para BFCO...");
-            int filesRenamed = 0;
-            for (const auto& fileEntry : std::filesystem::directory_iterator(destinationPath)) {
-                if (fileEntry.is_regular_file()) {
-                    std::string filename = fileEntry.path().filename().string();
-                    std::string lower_filename = filename;
-                    // 2. Converte a cópia para minúsculas.
-                    std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
-                                   [](unsigned char c) { return std::tolower(c); });
-                    if (lower_filename.rfind("mco_", 0) == 0) {
-                        std::string newFilename = filename;
-                        newFilename.replace(0, 4, "BFCO_");
-                        std::filesystem::path newFilePath = destinationPath / newFilename;
-                        try {
-                            std::filesystem::rename(fileEntry.path(), newFilePath);
-                            filesRenamed++;
-                        } catch (const std::filesystem::filesystem_error& e) {
-                            SKSE::log::error("Falha ao renomear {} para {}. Erro: {}", fileEntry.path().string(),
-                                             newFilePath.string(), e.what());
-                        }
-                    }
-                }
-            }
-            SKSE::log::info("Conversão BFCO concluída. {} arquivos renomeados.", filesRenamed);
-        }
-
-        // Lógica de atualização do JSON (inalterada)
-        if (doc.HasMember("conversionDone")) {
-            doc["conversionDone"].SetBool(true);
-        } else {
-            doc.AddMember("conversionDone", true, doc.GetAllocator());
-        }
-
-        rapidjson::StringBuffer buffer;
-        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
-        doc.Accept(writer);
-
-        std::ofstream outFile(cycleDarJsonPath);
-        if (!outFile) {
-            SKSE::log::error("Falha ao abrir {} para escrita!", cycleDarJsonPath.string());
-            return;
-        }
-
-        outFile << buffer.GetString();
-        outFile.close();
-
-        SKSE::log::info("Arquivo JSON {} atualizado com sucesso.", cycleDarJsonPath.string());
         } catch (const std::filesystem::filesystem_error& e) {
             SKSE::log::critical("Erro de filesystem em ProcessCycleDarFile para o arquivo '{}': {}",
                                 cycleDarJsonPath.string(), e.what());
         }
     }
+
 
     // --- DESAFIO 1: Nova função para escanear a pasta do sub-moveset em busca de tags ---
     void ScanSubAnimationFolderForTags(const std::filesystem::path& subAnimPath,
@@ -287,6 +307,8 @@ std::string PathToUTF8(const std::filesystem::path& path) {
             {"Greatsword", 5.0, -1.0, false, false, {}, {}},
             {"Battleaxe", 6.0, -1.0, false, false, {}, {}},
             {"Warhammer", 10.0, -1.0, false, false, {}, {}},
+            {"Bow", 7.0, -1.0, false, false, {}, {}},
+            {"Crossbow", 9.0, -1.0, false, false, {}, {}},
             // Shield
             //{"Shield", -1.0, 11.0, false, true, {}, {}},
             {"Sword & Shield", 1.0, 11.0, false, true, {}, {}},
@@ -385,6 +407,39 @@ std::string PathToUTF8(const std::filesystem::path& path) {
         }
     }
     
+
+    void AnimationManager::LoadGameDataForEffects() {
+        _allMagicEffects.clear();
+        _allSpells.clear();
+
+        auto dataHandler = RE::TESDataHandler::GetSingleton();
+        if (!dataHandler) return;
+
+        // Carregar Magic Effects (EffectSetting)
+        for (const auto& mgef : dataHandler->GetFormArray<RE::EffectSetting>()) {
+            if (mgef && mgef->GetFullName() && strlen(mgef->GetFullName()) > 0 && mgef->GetFile(0)) {
+                _allMagicEffects.push_back({mgef->GetFormID(), clib_util::editorID::get_editorID(mgef),
+                                            mgef->GetFullName(), std::string(mgef->GetFile(0)->GetFilename())});
+            }
+        }
+        SKSE::log::info("Carregados {} Magic Effects.", _allMagicEffects.size());
+
+        // Carregar Spells (SpellItem)
+        for (const auto& spell : dataHandler->GetFormArray<RE::SpellItem>()) {
+            // Filtra spells que não são usáveis pelo jogador ou não têm nome/plugin
+            if (spell && spell->GetFullName() && strlen(spell->GetFullName()) > 0 && spell->GetFile(0) &&
+                (spell->GetSpellType() != RE::MagicSystem::SpellType::kLeveledSpell) &&  // Ignora leveled spells
+                (spell->GetSpellType() != RE::MagicSystem::SpellType::kAbility ||
+                 spell->data.flags.any(
+                     RE::SpellItem::SpellFlag::kCostOverride)) &&  // Permite abilities com custo (ex: Lesser Powers)
+                (spell->GetSpellType() != RE::MagicSystem::SpellType::kDisease))  // Ignora doenças
+            {
+                _allSpells.push_back({spell->GetFormID(), clib_util::editorID::get_editorID(spell),
+                                      spell->GetFullName(), std::string(spell->GetFile(0)->GetFilename())});
+            }
+        }
+        SKSE::log::info("Carregados {} Spells (filtrados).", _allSpells.size());
+    }
 
     void AnimationManager::ProcessTopLevelMod(const std::filesystem::path& modPath) {
         try {
@@ -814,6 +869,7 @@ std::string PathToUTF8(const std::filesystem::path& path) {
         DrawRestartPopup();
         DrawCreateCategoryModal();
         DrawPerkSelectorPopup();
+        DrawEffectSelectorPopup();
         
     }
 
@@ -1060,7 +1116,19 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                             _subMovesetToEditPerk = nullptr;
                             _isPerkSelectorOpen = true;
                         }
-                        
+                        ImGui::SameLine();  // Coloca ao lado do botão de Perks
+                        std::string stanceEffectLabel =
+                            std::format("Apply Effects ({})##StanceEffect_{}", instance.appliedEffects.size(), i);
+                        if (ImGui::Button(stanceEffectLabel.c_str())) {
+                            _effectsToDisplayInPopup.clear();
+                            _inheritedEffectFormIDs.clear();                     // Stance não herda de ninguém
+                            _effectsToDisplayInPopup = instance.appliedEffects;  // Mostra os efeitos próprios da stance
+
+                            _stanceToEditEffect = &instance;  // Define o alvo para salvar
+                            _movesetToEditEffect = nullptr;
+                            _subMovesetToEditEffect = nullptr;
+                            _isEffectSelectorOpen = true;  // Abre o popup
+                        }
                     
                         std::map<SubAnimationInstance*, int> playlistNumbers;
                         std::map<SubAnimationInstance*, int> parentNumbersForChildren;
@@ -1164,6 +1232,27 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                                 _subMovesetToEditPerk = nullptr;
                                 _isPerkSelectorOpen = true;
                             }
+                            ImGui::SameLine();  // Coloca ao lado do botão de Perks do Moveset
+                            std::string movesetEffectLabel = std::format("Apply Effects ({})##MovesetEffect_{}",
+                                                                         modInstance.appliedEffects.size(), mod_i);
+                            if (ImGui::Button(movesetEffectLabel.c_str())) {
+                                _effectsToDisplayInPopup.clear();
+                                _inheritedEffectFormIDs.clear();
+                                // 1. Adiciona efeitos herdados da Stance
+                                for (const auto& effect : instance.appliedEffects) {
+                                    _effectsToDisplayInPopup.push_back(effect);
+                                    _inheritedEffectFormIDs.insert(effect.formID);
+                                }
+                                // 2. Adiciona efeitos próprios do Moveset
+                                for (const auto& effect : modInstance.appliedEffects) {
+                                    _effectsToDisplayInPopup.push_back(effect);
+                                }
+
+                                _stanceToEditEffect = nullptr;
+                                _movesetToEditEffect = &modInstance;  // Define o alvo
+                                _subMovesetToEditEffect = nullptr;
+                                _isEffectSelectorOpen = true;
+                            }
                             ImGui::SameLine();
                             bool node_open = ImGui::TreeNode(sourceMod.name.c_str());
                             if (ImGui::BeginDragDropSource()) {
@@ -1233,6 +1322,36 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                                         _movesetToEditPerk = nullptr;
                                         _subMovesetToEditPerk = &subInstance;
                                         _isPerkSelectorOpen = true;
+                                    }
+                                    ImGui::SameLine();
+                                    std::string subEffectLabel =
+                                        std::format("Apply Effects ({})##SubEffect_{}_{}",
+                                                    subInstance.appliedEffects.size(), mod_i, sub_j);
+                                    if (ImGui::Button(subEffectLabel.c_str())) {
+                                        _effectsToDisplayInPopup.clear();
+                                        _inheritedEffectFormIDs.clear();
+                                        // 1. Adiciona efeitos herdados da Stance
+                                        for (const auto& effect : instance.appliedEffects) {
+                                            _effectsToDisplayInPopup.push_back(effect);
+                                            _inheritedEffectFormIDs.insert(effect.formID);
+                                        }
+                                        // 2. Adiciona efeitos herdados do Moveset
+                                        for (const auto& effect : modInstance.appliedEffects) {
+                                            if (_inheritedEffectFormIDs.find(effect.formID) ==
+                                                _inheritedEffectFormIDs.end()) {  // Evita duplicatas herdadas
+                                                _effectsToDisplayInPopup.push_back(effect);
+                                                _inheritedEffectFormIDs.insert(effect.formID);
+                                            }
+                                        }
+                                        // 3. Adiciona efeitos próprios do Sub-Moveset
+                                        for (const auto& effect : subInstance.appliedEffects) {
+                                            _effectsToDisplayInPopup.push_back(effect);
+                                        }
+
+                                        _stanceToEditEffect = nullptr;
+                                        _movesetToEditEffect = nullptr;
+                                        _subMovesetToEditEffect = &subInstance;  // Define o alvo
+                                        _isEffectSelectorOpen = true;
                                     }
                                     ImGui::SameLine();
                                     ImGui::BeginGroup();
@@ -2200,6 +2319,129 @@ void AnimationManager::PopulatePerkList() {
     SKSE::log::info("Carregados {} perks.", _allPerks.size());
 }
 
+bool AnimationManager::CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) { 
+if (!actor) return false;        // Segurança
+    if (perks.empty()) return true;  // Se não há perks, está disponível
+
+    for (const auto& perkDef : perks) {
+        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
+        if (!perkForm || !actor->HasPerk(perkForm)) {
+            // O ator não tem um dos perks necessários
+            return false;
+        }
+    }
+    // O ator tem todos os perks
+    return true;
+}
+
+std::vector<AvailableItem> AnimationManager::GetAvailableStances(RE::Actor* actor, const std::string& categoryName) {
+    std::vector<AvailableItem> availableStances;
+    auto cat_it = _categories.find(categoryName);
+    if (cat_it == _categories.end()) return availableStances;
+
+    WeaponCategory& category = cat_it->second;
+
+    // Itera por todas as stances configuradas (índice 0-based)
+    for (int i = 0; i < category.instances.size(); ++i) {
+        const auto& instance = category.instances[i];  // Esta é a stance
+
+        // 1. O ator tem os perks para ESTA STANCE?
+        if (!CheckActorHasPerks(actor, instance.perkList)) {
+            continue;  // Pula esta stance, o jogador não tem o perk
+        }
+
+        // 2. Esta stance está VAZIA?
+        // (Verifica se ela tem pelo menos UM moveset que também seja válido)
+        bool hasAvailableMoveset = false;
+        for (const auto& modInst : instance.modInstances) {
+            if (!modInst.isSelected || !CheckActorHasPerks(actor, modInst.perkList)) continue;
+
+            for (const auto& subInst : modInst.subAnimationInstances) {
+                if (!subInst.isSelected) continue;
+
+                // É um moveset "pai" (não direcional)?
+                bool isParent = !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                  subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                  subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+
+                // O ator tem os perks para este SUB-MOVESET?
+                if (isParent && CheckActorHasPerks(actor, subInst.perkList)) {
+                    hasAvailableMoveset = true;
+                    break;
+                }
+            }
+            if (hasAvailableMoveset) break;
+        }
+
+        // 3. Se a stance passou nos perks E não está vazia, adicione-a à lista
+        if (hasAvailableMoveset) {
+            availableStances.push_back({category.stanceNames[i], i + 1});  // Salva o nome e o índice 1-based
+        }
+    }
+    return availableStances;
+}
+
+std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* actor, const std::string& categoryName,
+                                                                  int stanceOriginalIndex) {
+    std::vector<AvailableItem> availableMovesets;
+    if (stanceOriginalIndex <= 0) return availableMovesets;
+
+    auto cat_it = _categories.find(categoryName);
+    if (cat_it == _categories.end()) return availableMovesets;
+
+    WeaponCategory& category = cat_it->second;
+    if (stanceOriginalIndex > category.instances.size()) return availableMovesets;
+
+    const auto& instance = category.instances[stanceOriginalIndex - 1];  // A stance que queremos
+
+    // 1. (Opcional, mas bom) Verificar os perks da stance pai.
+    // (A GetAvailableStances já deve ter feito isso, mas é uma boa segurança)
+    if (!CheckActorHasPerks(actor, instance.perkList)) {
+        return availableMovesets;  // A stance inteira está bloqueada
+    }
+
+    int parentCounter = 0;  // Este será o "índice original" do moveset
+    for (const auto& modInst : instance.modInstances) {
+        if (!modInst.isSelected) continue;
+
+        // 2. O ator tem os perks para este MOVESET (ModInstance)?
+        if (!CheckActorHasPerks(actor, modInst.perkList)) {
+            // Se o moveset (modpack) está bloqueado, pulamos todos os seus filhos
+            // Mas ainda precisamos contar os "pais" dentro dele para manter os índices corretos
+            for (const auto& subInst : modInst.subAnimationInstances) {
+                bool isParent = !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                  subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                  subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+                if (isParent) parentCounter++;
+            }
+            continue;
+        }
+
+        // 3. Itera pelos sub-movesets
+        for (const auto& subInst : modInst.subAnimationInstances) {
+            if (!subInst.isSelected) continue;
+
+            bool isParent =
+                !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight || subInst.pFrontRight ||
+                  subInst.pFrontLeft || subInst.pBackRight || subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+            if (!isParent) continue;  // Só nos importamos com os "pais" para a ciclagem
+
+            parentCounter++;  // Achamos um "pai", seu índice é este.
+
+            // 4. O ator tem os perks para este SUB-MOVESET?
+            if (CheckActorHasPerks(actor, subInst.perkList)) {
+                // SUCESSO! Este moveset está disponível
+                const auto& sourceSubAnim = _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
+                const char* displayName =
+                    (subInst.editedName[0] != '\0') ? subInst.editedName.data() : sourceSubAnim.name.c_str();
+
+                availableMovesets.push_back({displayName, parentCounter});
+            }
+        }
+    }
+    return availableMovesets;
+}
+
 
     void AnimationManager::UpdateOrCreateJson(const std::filesystem::path& jsonPath,
                                               const std::vector<FileSaveConfig>& configs) {
@@ -2789,7 +3031,66 @@ void ParsePerkListJson(const rapidjson::Value& sourceObject, const std::string& 
             }
         }
     }
+void CreateEffectListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
+                          const std::vector<AppliedEffect>& effectList) {
+    if (effectList.empty()) return;
 
+    rapidjson::Value effectArray(rapidjson::kArrayType);
+    auto& allocator = doc.GetAllocator();
+
+    for (const auto& effect : effectList) {
+        rapidjson::Value effectData(rapidjson::kArrayType);
+        // Armazena o tipo como string para legibilidade
+        const char* typeStr = "Unknown";
+        switch (effect.type) {
+            case AppliedEffect::EffectType::Perk:
+                typeStr = "Perk";
+                break;
+            case AppliedEffect::EffectType::MagicEffect:
+                typeStr = "MagicEffect";
+                break;
+            case AppliedEffect::EffectType::Spell:
+                typeStr = "Spell";
+                break;
+        }
+        effectData.PushBack(rapidjson::Value(typeStr, allocator), allocator);  // Índice 0: Tipo (string)
+        effectData.PushBack(rapidjson::Value(effect.pluginName.c_str(), allocator), allocator);  // Índice 1: Plugin
+        effectData.PushBack(effect.formID, allocator);                                           // Índice 2: FormID
+        effectData.PushBack(rapidjson::Value(effect.origin.c_str(), allocator),
+                            allocator);  // Índice 3: Origem (para UI)
+
+        effectArray.PushBack(effectData, allocator);
+    }
+    targetObject.AddMember(rapidjson::Value(keyName.c_str(), allocator), effectArray, allocator);
+}
+
+// --- NOVO HELPER PARA CARREGAR ---
+void ParseEffectListJson(const rapidjson::Value& sourceObject, const std::string& keyName,
+                         std::vector<AppliedEffect>& targetList) {  // Modificado para receber a lista diretamente
+    if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
+        return;
+    }
+
+    const auto& effectArray = sourceObject[keyName.c_str()].GetArray();
+    for (const auto& effectData : effectArray) {
+        // Verifica se tem 4 elementos e os tipos corretos
+        if (effectData.IsArray() && effectData.Size() == 4 && effectData[0].IsString() && effectData[1].IsString() &&
+            effectData[2].IsUint() && effectData[3].IsString()) {
+            std::string typeStr = effectData[0].GetString();
+            AppliedEffect::EffectType type = AppliedEffect::EffectType::Perk;  // Padrão
+            if (typeStr == "MagicEffect")
+                type = AppliedEffect::EffectType::MagicEffect;
+            else if (typeStr == "Spell")
+                type = AppliedEffect::EffectType::Spell;
+
+            std::string plugin = effectData[1].GetString();
+            RE::FormID formID = effectData[2].GetUint();
+            std::string origin = effectData[3].GetString();
+
+            targetList.push_back({type, plugin, formID, origin});  // Adiciona à lista fornecida
+        }
+    }
+}
     void AnimationManager::SaveCycleMovesets() {
         SKSE::log::info("Iniciando salvamento do estado da UI em arquivos User_CycleMoveset.json...");
 
@@ -2931,7 +3232,24 @@ void ParsePerkListJson(const rapidjson::Value& sourceObject, const std::string& 
                             rapidjson::Value& animationsArray = (*stanceObj)["animations"];
                             rapidjson::Value animObj(rapidjson::kObjectType);
                             std::vector<PerkDef> allPerksForThisAnimation;
+                            std::vector<AppliedEffect> allEffectsForThisAnimation;
+                            for (const auto& eff : instance.appliedEffects) {
+                                allEffectsForThisAnimation.push_back({eff.type, eff.pluginName, eff.formID, "Stance"});
+                            }
+                            // Coleta do Moveset
+                            for (const auto& eff : modInst.appliedEffects) {
+                                allEffectsForThisAnimation.push_back({eff.type, eff.pluginName, eff.formID, "Moveset"});
+                            }
+                            // Coleta do SubMoveset
+                            for (const auto& eff : subInst.appliedEffects) {
+                                allEffectsForThisAnimation.push_back(
+                                    {eff.type, eff.pluginName, eff.formID, "SubMoveset"});
+                            }
 
+                            // Salva a lista consolidada (se não vazia)
+                            if (!allEffectsForThisAnimation.empty()) {
+                                CreateEffectListJson(doc, animObj, "AppliedEffects", allEffectsForThisAnimation);
+                            }
                             for (const auto& p : instance.perkList) {
                                 allPerksForThisAnimation.push_back({p.pluginName, p.formID, "Stance"});
                             }
@@ -3217,6 +3535,36 @@ void AnimationManager::LoadCycleMovesets() {
                             newSubInstance.sourceSubAnimIndex = indicesOpt->second;
                             targetInstance.perkList.clear();
                             modInstancePtr->perkList.clear();
+                            targetInstance.appliedEffects.clear();
+                            modInstancePtr->appliedEffects.clear();
+                            newSubInstance.appliedEffects.clear();
+                            std::vector<AppliedEffect> loadedEffects;
+                            ParseEffectListJson(animJson, "AppliedEffects", loadedEffects);
+
+                            // Distribui os efeitos carregados para suas origens corretas
+                            for (const auto& loadedEffect : loadedEffects) {
+                                if (loadedEffect.origin == "Stance") {
+                                    targetInstance.appliedEffects.push_back(loadedEffect);
+                                } else if (loadedEffect.origin == "Moveset") {
+                                    modInstancePtr->appliedEffects.push_back(loadedEffect);
+                                } else if (loadedEffect.origin == "SubMoveset") {
+                                    newSubInstance.appliedEffects.push_back(loadedEffect);
+                                }
+                            }
+                            // Remove duplicatas em cada nível (opcional, mas bom)
+                            std::sort(targetInstance.appliedEffects.begin(), targetInstance.appliedEffects.end());
+                            targetInstance.appliedEffects.erase(
+                                std::unique(targetInstance.appliedEffects.begin(), targetInstance.appliedEffects.end()),
+                                targetInstance.appliedEffects.end());
+                            // Faça o mesmo para modInstancePtr->appliedEffects e newSubInstance.appliedEffects
+                            std::sort(modInstancePtr->appliedEffects.begin(), modInstancePtr->appliedEffects.end());
+                            modInstancePtr->appliedEffects.erase(std::unique(modInstancePtr->appliedEffects.begin(),
+                                                                             modInstancePtr->appliedEffects.end()),
+                                                                 modInstancePtr->appliedEffects.end());
+                            std::sort(newSubInstance.appliedEffects.begin(), newSubInstance.appliedEffects.end());
+                            newSubInstance.appliedEffects.erase(
+                                std::unique(newSubInstance.appliedEffects.begin(), newSubInstance.appliedEffects.end()),
+                                newSubInstance.appliedEffects.end());
                             if (animJson.IsObject()) {
                                 // Chama a nova função passando ponteiros para todos os níveis
                                 ParsePerkListJson(animJson, "PerkList", &targetInstance, modInstancePtr,
@@ -3644,8 +3992,8 @@ void AnimationManager::LoadCycleMovesets() {
     }
 
     // Função para buscar o nome do moveset
-    std::string AnimationManager::GetCurrentMovesetName(const std::string& categoryName, int stanceIndex,
-                                                        int movesetIndex, int directionalState) {
+    std::string AnimationManager::GetCurrentMovesetName(RE::Actor* actor, const std::string& categoryName,
+                                                        int stanceIndex, int movesetIndex, int directionalState) {
         //SKSE::log::info("==========================================================");
         //SKSE::log::info("[GetCurrentMovesetName] Invocado com: Categoria='{}', Stance={}, MovesetIndex={}, Direcao={}",categoryName, stanceIndex, movesetIndex, directionalState);
         if (movesetIndex <= 0) {
@@ -3705,6 +4053,13 @@ void AnimationManager::LoadCycleMovesets() {
                         (directionalState == 7 && subInst.pLeft) || (directionalState == 8 && subInst.pFrontLeft);
 
                     if (isDirectionalMatch) {
+                        if (CheckActorHasPerks(actor, subInst.perkList)) {
+                            // Se o jogador tem o perk, retorna o nome do filho
+                            const auto& sourceSubAnimChild =
+                                _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
+                            return (subInst.editedName[0] != '\0') ? subInst.editedName.data()
+                                                                   : sourceSubAnimChild.name;
+                        }
                         // Encontramos o filho direcional que corresponde ao nosso pai! Este é o resultado final.
                         const auto& sourceSubAnimChild =
                             _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
@@ -5645,68 +6000,77 @@ void AnimationManager::LoadGameDataForNpcRules() {
     }
 
     void AnimationManager::ConvertAllMcoToBfco() {
-        SKSE::log::info("Iniciando conversão global de MCO para BFCO...");
-        int totalFilesRenamed = 0;
+        SKSE::log::info("Iniciando solicitação de conversão global MCO para BFCO via CycleDar.json...");
+        int filesCreatedOrUpdated = 0;
 
-        const std::vector<std::filesystem::path> rootPaths = {
-            "Data/meshes/actors/character/animations/OpenAnimationReplacer",
-            "Data/meshes/actors/character/animations/DynamicAnimationReplacer/_CustomConditions"};
-
-        // Função interna que renomeia arquivos em um único diretório
-        auto convertInDirectory = [&](const std::filesystem::path& dirPath) {
-            int filesRenamedInDir = 0;
-            try {
-                for (const auto& fileEntry : std::filesystem::directory_iterator(dirPath)) {
-                    if (fileEntry.is_regular_file()) {
-                        std::string filename = fileEntry.path().filename().string();
-                        std::string lower_filename = filename;
-                        std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
-                                       [](unsigned char c) { return std::tolower(c); });
-
-                        if (lower_filename.rfind("mco_", 0) == 0) {
-                            std::string newFilename = filename;
-                            newFilename.replace(0, 4, "BFCO_");
-                            std::filesystem::path newFilePath = dirPath / newFilename;
-                            try {
-                                std::filesystem::rename(fileEntry.path(), newFilePath);
-                                filesRenamedInDir++;
-                            } catch (const std::filesystem::filesystem_error& e) {
-                                SKSE::log::error("Falha ao renomear {} para {}. Erro: {}", fileEntry.path().string(),
-                                                 newFilePath.string(), e.what());
-                            }
-                        }
-                    }
+        // Itera por toda a biblioteca de animações carregada (_allMods)
+        for (const auto& modDef : _allMods) {
+            for (const auto& subAnimDef : modDef.subAnimations) {
+                // 1. Encontra o caminho da pasta da sub-animação
+                std::filesystem::path folderPath;
+                if (subAnimDef.path.filename() == "config.json") {
+                    folderPath = subAnimDef.path.parent_path();
+                } else {
+                    folderPath = subAnimDef.path;  // Para DAR, o path já é a pasta
                 }
-            } catch (const std::filesystem::filesystem_error& e) {
-                SKSE::log::error("Erro de filesystem ao iterar na pasta {}: {}", dirPath.string(), e.what());
-            }
 
-            if (filesRenamedInDir > 0) {
-                SKSE::log::info("{} arquivos renomeados em {}.", filesRenamedInDir, dirPath.string());
-                totalFilesRenamed += filesRenamedInDir;
-            }
-        };
+                // 2. Define o caminho do CycleDar.json
+                std::filesystem::path cycleDarPath = folderPath / "CycleDar.json";
 
-        // Itera pelas pastas raiz
-        for (const auto& rootPath : rootPaths) {
-            if (!std::filesystem::exists(rootPath) || !std::filesystem::is_directory(rootPath)) {
-                continue;
-            }
-            try {
-                // Itera recursivamente por todas as subpastas
-                for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
-                    if (entry.is_directory()) {
-                        convertInDirectory(entry.path());
+                rapidjson::Document doc;
+
+                // 3. Tenta ler o arquivo existente
+                std::ifstream fileStream(cycleDarPath);
+                if (fileStream) {
+                    std::string jsonContent((std::istreambuf_iterator<char>(fileStream)),
+                                            std::istreambuf_iterator<char>());
+                    fileStream.close();
+                    if (doc.Parse(jsonContent.c_str()).HasParseError()) {
+                        SKSE::log::error("Erro de Parse ao ler {}. Criando um novo arquivo.", cycleDarPath.string());
+                        doc.SetObject();
                     }
+                } else {
+                    doc.SetObject();
                 }
-            } catch (const std::filesystem::filesystem_error& e) {
-                SKSE::log::error("Erro de filesystem durante a varredura do diretório {}: {}", rootPath.string(),
-                                 e.what());
+                if (!doc.IsObject()) doc.SetObject();
+
+                auto& allocator = doc.GetAllocator();
+                if (!doc.HasMember("sources")) {
+                    doc.AddMember("sources", rapidjson::Value(rapidjson::kArrayType), allocator);
+                } else if (!doc["sources"].IsArray()) {
+                    // Se existir mas não for array, substitui por um array vazio
+                    doc["sources"].SetArray();
+                }
+                if (doc.HasMember("convertBFCO")) {
+                    doc["convertBFCO"].SetBool(true);
+                } else {
+                    doc.AddMember("convertBFCO", true, allocator);
+                }
+
+                // 5. Salva o arquivo JSON
+                FILE* fp;
+                fopen_s(&fp, cycleDarPath.string().c_str(), "wb");
+                if (!fp) {
+                    SKSE::log::error("Falha ao abrir o arquivo para escrita: {}", cycleDarPath.string());
+                    continue;
+                }
+                char writeBuffer[65536];
+                rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
+                rapidjson::PrettyWriter<rapidjson::FileWriteStream> writer(os);
+                doc.Accept(writer);
+                fclose(fp);
+
+                filesCreatedOrUpdated++;
             }
         }
 
-        SKSE::log::info("Conversão global concluída. Total de {} arquivos renomeados.", totalFilesRenamed);
-        RE::DebugNotification(std::format("{} MCO files were converted to BFCO.", totalFilesRenamed).c_str());
+        SKSE::log::info("Solicitação de conversão concluída. {} arquivos CycleDar.json foram criados/atualizados.",
+                        filesCreatedOrUpdated);
+        RE::DebugNotification(
+            std::format("BFCO conversion requested for {} movesets. Reload game.", filesCreatedOrUpdated).c_str());
+
+        // Mostra o pop-up de reinício, pois a conversão real só ocorrerá no próximo load
+        _showRestartPopup = true;
     }
 
     std::optional<int64_t> AnimationManager::GetFileTime(const std::filesystem::path& path) {
@@ -6173,7 +6537,145 @@ void AnimationManager::DrawPerkSelectorPopup() {
 
             ImGui::EndPopup();
         }
+}
+
+void AnimationManager::DrawEffectSelectorPopup() {
+    if (_isEffectSelectorOpen) {
+        ImGui::OpenPopup("Select Effect to Apply");
+        _isEffectSelectorOpen = false;  // Reseta o gatilho
     }
+
+    static std::vector<AppliedEffect> tempSelectedEffects;  // Lista temporária para a UI
+
+    // Configuração do popup (tamanho, posição, etc. - similar ao DrawPerkSelectorPopup)
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.6f, viewport->Size.y * 0.7f));  // Um pouco maior
+
+    if (ImGui::BeginPopupModal("Select Effect to Apply", NULL, ImGuiWindowFlags_None)) {
+        // Preenche a lista temporária ao abrir
+        if (ImGui::IsWindowAppearing()) {
+            // Remove duplicatas que possam ter vindo de diferentes níveis
+            std::sort(_effectsToDisplayInPopup.begin(), _effectsToDisplayInPopup.end());
+            _effectsToDisplayInPopup.erase(
+                std::unique(_effectsToDisplayInPopup.begin(), _effectsToDisplayInPopup.end()),
+                _effectsToDisplayInPopup.end());
+            tempSelectedEffects = _effectsToDisplayInPopup;
+        }
+
+        // Filtros
+        ImGui::InputText("Filter Name/EditorID", _effectFilter, sizeof(_effectFilter));
+        ImGui::SameLine();
+        const char* types[] = {"All Types", "Perks", "Magic Effects", "Spells"};
+        ImGui::PushItemWidth(150);
+        ImGui::Combo("Filter Type", &_effectTypeFilter, types, sizeof(types) / sizeof(types[0]));
+        ImGui::PopItemWidth();
+        ImGui::Separator();
+
+        // Lista com scroll
+        if (ImGui::BeginChild("EffectList", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2))) {
+            std::string filter_str = _effectFilter;
+            std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
+
+            // Função auxiliar para desenhar uma seção da lista
+            auto draw_list = [&](const auto& sourceList, AppliedEffect::EffectType type, const char* typeLabel) {
+                for (const auto& item : sourceList) {
+                    std::string name_lower = item.name;
+                    std::string editorid_lower = item.editorID;
+                    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                    std::transform(editorid_lower.begin(), editorid_lower.end(), editorid_lower.begin(), ::tolower);
+
+                    if (filter_str.empty() || name_lower.find(filter_str) != std::string::npos ||
+                        editorid_lower.find(filter_str) != std::string::npos) {
+                        // Verifica se está selecionado na lista temporária
+                        auto it = std::find_if(
+                            tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                            [&](const AppliedEffect& ae) { return ae.formID == item.formID && ae.type == type; });
+                        bool is_selected = (it != tempSelectedEffects.end());
+
+                        bool is_inherited = _inheritedEffectFormIDs.count(item.formID);  // Verifica se é herdado
+
+                        if (is_inherited) ImGui::BeginDisabled();
+
+                        if (ImGui::Checkbox(item.name.c_str(), &is_selected)) {
+                            if (is_selected) {  // Se acabou de ser marcado
+                                std::string origin = "";
+                                if (_stanceToEditEffect)
+                                    origin = "Stance";
+                                else if (_movesetToEditEffect)
+                                    origin = "Moveset";
+                                else if (_subMovesetToEditEffect)
+                                    origin = "SubMoveset";
+                                tempSelectedEffects.push_back({type, item.pluginName, item.formID, origin});
+                            } else {  // Se acabou de ser desmarcado
+                                auto to_erase = std::find_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                                             [&](const AppliedEffect& ae) {
+                                                                 return ae.formID == item.formID && ae.type == type;
+                                                             });
+                                if (to_erase != tempSelectedEffects.end()) {
+                                    tempSelectedEffects.erase(to_erase);
+                                }
+                            }
+                        }
+
+                        if (is_inherited) ImGui::EndDisabled();
+
+                        ImGui::SameLine(400);  // Ajuste a largura conforme necessário
+                        ImGui::TextDisabled("[%s] %s | %s", typeLabel, item.editorID.c_str(), item.pluginName.c_str());
+                    }
+                }
+            };
+
+            // Desenha as seções baseadas no filtro de tipo
+            if (_effectTypeFilter == 0 || _effectTypeFilter == 1)
+                draw_list(_allPerks, AppliedEffect::EffectType::Perk, "Perk");
+            if (_effectTypeFilter == 0 || _effectTypeFilter == 2)
+                draw_list(_allMagicEffects, AppliedEffect::EffectType::MagicEffect, "MGEF");
+            if (_effectTypeFilter == 0 || _effectTypeFilter == 3)
+                draw_list(_allSpells, AppliedEffect::EffectType::Spell, "Spell");
+        }
+        ImGui::EndChild();
+        ImGui::Separator();
+
+        // Botões Save, Clear All, Close (lógica similar ao DrawPerkSelectorPopup)
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            // Remove os efeitos herdados antes de salvar
+            std::vector<AppliedEffect> effectsToSave;
+            for (const auto& effect : tempSelectedEffects) {
+                if (_inheritedEffectFormIDs.find(effect.formID) == _inheritedEffectFormIDs.end()) {
+                    effectsToSave.push_back(effect);
+                }
+            }
+
+            // Salva na struct apropriada
+            if (_stanceToEditEffect)
+                _stanceToEditEffect->appliedEffects = effectsToSave;
+            else if (_movesetToEditEffect)
+                _movesetToEditEffect->appliedEffects = effectsToSave;
+            else if (_subMovesetToEditEffect)
+                _subMovesetToEditEffect->appliedEffects = effectsToSave;
+
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear All", ImVec2(120, 0))) {
+            // Remove da lista temporária todos os efeitos que NÃO são herdados
+            tempSelectedEffects.erase(std::remove_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                                     [&](const AppliedEffect& p) {
+                                                         return _inheritedEffectFormIDs.find(p.formID) ==
+                                                                _inheritedEffectFormIDs.end();
+                                                     }),
+                                      tempSelectedEffects.end());
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
 
 RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
         // Pega a interface de usuário (UI) do jogo
@@ -6225,6 +6727,12 @@ RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
         const REL::Relocation<std::uintptr_t> function{REL::RelocationID(51019, 51897)};
         InventoryHoverHook::originalFunction =
             trampoline.write_call<5>(function.address() + REL::Relocate(0x114, 0x22c), InventoryHoverHook::thunk);
+        const REL::Relocation<std::uintptr_t> target{REL::RelocationID(37938, 38894)};
+        GlobalControl::Equip2H::func =
+            trampoline.write_call<5>(target.address() + REL::Relocate(0xe5, 0x170), GlobalControl::Equip2H::thunk);
+        const REL::Relocation<std::uintptr_t> targetU{REL::RelocationID(37945, 38901)};
+        GlobalControl::Unequip2H::func =
+            trampoline.write_call<5>(targetU.address() + REL::Relocate(0x138, 0x1b9), GlobalControl::Unequip2H::thunk);
     }
 
 int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
@@ -6248,5 +6756,7 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
 
         return originalFunction(a1);
     }
+
+
 
 

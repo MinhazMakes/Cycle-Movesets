@@ -20,201 +20,57 @@ struct MatchResult {
 bool isTwoHanded(RE::TESForm* a_weap) {
     if (!a_weap || !a_weap->IsWeapon()) return false;
     auto weap = a_weap->As<RE::TESObjectWEAP>();
-    // No dynamicGrip, isso inclui espadas e machados de duas mãos.
     if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
     return false;
 }
 
-bool VerifyDualWieldState(RE::Actor* npc, RE::TESObjectWEAP* expectedRight, RE::TESObjectWEAP* expectedLeft) {
-    if (!npc) return false;
 
-    logger::info("--- Verificando Estado de Equipamento para '{}' ---", npc->GetName());
-
-    bool rightHandOK = false;
-    bool leftHandOK = false;
-
-    // Checa a Mão Direita (isLeftHand = false)
-    auto rightHandObject = npc->GetEquippedObject(false);
-    if (rightHandObject && rightHandObject->IsWeapon()) {
-        auto rightWeapon = rightHandObject->As<RE::TESObjectWEAP>();
-        logger::info("  Mão Direita: Equipado com '{}'. Esperado: '{}'.", rightWeapon->GetName(),
-                     expectedRight->GetName());
-        if (rightWeapon == expectedRight) {
-            logger::info("    -> CORRETO!");
-            rightHandOK = true;
-        } else {
-            logger::error("    -> INCORRETO!");
-        }
-    } else {
-        logger::warn("  Mão Direita: VAZIA ou com item não-arma.");
-    }
-
-    // Checa a Mão Esquerda (isLeftHand = true)
-    auto leftHandObject = npc->GetEquippedObject(true);
-    if (leftHandObject && leftHandObject->IsWeapon()) {
-        auto leftWeapon = leftHandObject->As<RE::TESObjectWEAP>();
-        logger::info("  Mão Esquerda: Equipado com '{}'. Esperado: '{}'.", leftWeapon->GetName(),
-                     expectedLeft->GetName());
-        if (leftWeapon == expectedLeft) {
-            logger::info("    -> CORRETO!");
-            leftHandOK = true;
-        } else {
-            logger::error("    -> INCORRETO!");
-        }
-    } else {
-        logger::warn("  Mão Esquerda: VAZIA ou com item não-arma.");
-    }
-
-    logger::info("--- Verificação Concluída ---");
-
-    return rightHandOK && leftHandOK;
-}
-void ForceNPCToAttack(RE::Actor* npc, bool isPowerAttack = false) {
-    if (!npc || !npc->IsInCombat()) {
-        logger::warn("ForceNPCToAttack: NPC nulo ou não está em combate. Abortando.");
-        return;
-    }
-
-    // O evento "attackStart" é um gatilho genérico para o behavior graph iniciar um ataque.
-    // Se o NPC tiver um alvo, ele deve se virar e atacar.
-    const char* eventName = isPowerAttack ? "attackPowerStart" : "attackStart";
-
-    logger::info("--> Forçando o NPC '{}' a atacar com o evento '{}'.", npc->GetName(), eventName);
-
-    // Enviamos o evento para o gráfico de animação do NPC.
-    npc->NotifyAnimationGraph(eventName);
-
-    // Abordagem alternativa que pode funcionar em alguns casos:
-    // Definir uma variável de gráfico diretamente. Requer que o behavior esteja configurado para reagir a ela.
-    npc->SetGraphVariableBool("IsAttacking", true);
-}
 void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
     if (!actor || !item || !targetSlot) return;
 
     auto equipManager = RE::ActorEquipManager::GetSingleton();
     if (!equipManager) return;
 
-    if (item->IsWeapon() && isTwoHanded(item)) {
-        auto weapon = item->As<RE::TESObjectWEAP>();
-        auto originalSlot = weapon->GetEquipSlot();
-
-        // A lógica para enganar o motor do jogo continua a mesma
-        RE::BGSEquipSlot* tempSlot =
-            (targetSlot == Hooks::g_rightHandSlot) ? Hooks::g_leftHandSlot : Hooks::g_rightHandSlot;
-        weapon->SetEquipSlot(tempSlot);
-
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            // --- INÍCIO DA CORREÇÃO ---
-            // Em vez de limpar apenas a mão oposta, vamos limpar AMBAS as mãos
-            // para garantir que o personagem esteja pronto para equipar uma arma de 2H,
-            // mesmo que seja em um único slot.
-
-            // 1. Desequipa o que estiver na mão direita.
-            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, false, false, true);
-            // 2. Desequipa o que estiver na mão esquerda.
-            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
-
-            // --- FIM DA CORREÇÃO ---
-
-            // Agora, com as mãos garantidamente vazias, equipamos nosso item no slot alvo.
-            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
-
-            // Forçamos a atualização da UI
-            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
-
-            // Agendamos a restauração do slot original da arma
-            SKSE::GetTaskInterface()->AddTask([=]() {
-                if (auto form = RE::TESForm::LookupByID(item->GetFormID())) {
-                    if (auto weapToRestore = form->As<RE::TESObjectWEAP>()) {
-                        weapToRestore->SetEquipSlot(originalSlot);
-                    }
-                }
-            });
-        });
-    } else {
-        // Para armas de uma mão, a lógica padrão do jogo deve funcionar,
-        // mas para garantir, podemos também limpar o slot alvo antes.
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            // Limpa o slot alvo antes de equipar, garantindo a substituição.
-            equipManager->UnequipObject(actor, nullptr, nullptr, 1, targetSlot, true, false, false, true);
-            equipManager->EquipObject(actor, item, nullptr, 1, targetSlot, true, false, false, true);
-            RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
-        });
-    }
-}
-void EquipDualTwoHanded_NPC(RE::Actor* actor, RE::TESObjectWEAP* weapon1, RE::TESObjectWEAP* weapon2) {
-    if (!actor || !weapon1 || !weapon2) return;
-
-    auto equipManager = RE::ActorEquipManager::GetSingleton();
-    if (!equipManager) return;
-
-    auto originalSlot1 = weapon1->GetEquipSlot();
-    auto originalSlot2 = weapon2->GetEquipSlot();
-    auto originalType2 = weapon2->GetWeaponType();
-
-    // A lógica de enganar o motor continua a mesma
-    weapon1->SetEquipSlot(Hooks::g_leftHandSlot);   // Alvo: Mão Direita
-    weapon2->SetEquipSlot(Hooks::g_rightHandSlot);  // Alvo: Mão Esquerda
-
-    // --- INÍCIO DA CORREÇÃO COM TAREFAS ANINHADAS ---
-    SKSE::GetTaskInterface()->AddTask([=]() {
-        // 1. Limpa AMBAS as mãos para começar do zero.
-        equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, false, false, true);
-        equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
-        equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_twoHandSlot, true, false, false, true);
-
-        // 2. Equipa a PRIMEIRA arma (mão direita)
-        logger::info("Equipping right hand weapon: '{}'", weapon1->GetName());
-        equipManager->EquipObject(actor, weapon1, nullptr, 1, Hooks::g_rightHandSlot, true, false, false, true);
-
-        // 3. Agenda a SEGUNDA arma para ser equipada LOGO DEPOIS.
-        // Isso dá ao motor tempo para processar o primeiro equipamento.
-        SKSE::GetTaskInterface()->AddTask([=]() {
-            logger::info("Equipping left hand weapon: '{}'", weapon2->GetName());
-            equipManager->EquipObject(actor, weapon2, nullptr, 1, Hooks::g_leftHandSlot, true, false, false, true);
-            SKSE::GetTaskInterface()->AddTask([=]() {
-                // Não precisamos de um sleep aqui, pois esta tarefa só roda após as outras.
-                // Mas um pequeno delay pode ajudar a garantir que as animações se assentem.
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                weapon2->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
-                bool isEquippedCorrectly = VerifyDualWieldState(actor, weapon1, weapon2);
-
-                if (isEquippedCorrectly) {
-                    logger::info("Verificação de equipamento bem-sucedida. Forçando o ataque.");
-                    ForceNPCToAttack(actor, false);
-                } else {
-                    logger::warn("Falha na verificação de equipamento após tentativa. Abortando ataque.");
-                }
-            });
-        });
-    });
-
-    // --- FIM DA CORREÇÃO ---
+    equipManager->EquipObject(actor, item, nullptr, 1, targetSlot);
+    RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
 }
 
 void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
-    // 1. Validações Iniciais
     if (!npc || npc->IsPlayer()) {
         return;
     }
 
-    // Log de início de verificação
-    logger::info("-> Running checks for '{}'", npc->GetName());
-
-    // A condição original era `!npc->IsInCombat()`. Vamos relaxar essa condição para
-    // confiar no estado do evento, mas podemos deixar um log para ver o que a função retorna.
-    logger::info("   - Checking IsInCombat(): {}", npc->IsInCombat());
-
-    // Verificamos a keyword.
-
-    logger::info("   - Check PASSED: NPC has the keyword.");
     int npctype;
     npc->GetGraphVariableInt("CycleMovesetNpcType",npctype);  
-    if    (npctype != 0) {
-        logger::info("   - Check FAILED: NPC is not of type Warrior (CycleMovesetNpcType != 1).");
+
+
+    auto equippedItemL = npc->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
+    auto equippedItemR = npc->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
+
+    // 2. Inicializa os ponteiros de arma como nulos
+    RE::TESObjectWEAP* leftWeapon = nullptr;
+    RE::TESObjectWEAP* rightWeapon = nullptr;
+
+    // 3. Loga e converte o item da mão ESQUERDA (se existir)
+    if (equippedItemL) {
+        leftWeapon = equippedItemL->As<RE::TESObjectWEAP>();
+    } else {
+    }
+
+    // 4. Loga e converte o item da mão DIREITA (se existir)
+    if (equippedItemR) {
+        rightWeapon = equippedItemR->As<RE::TESObjectWEAP>();
+    } else {
+    }
+
+    if (isTwoHanded(leftWeapon)) {
+        logger::info(" NPC already has a two-handed weapon equipped in the left hand.");
+        return;
+    } else if (isTwoHanded(rightWeapon)) {
+        logger::info(" NPC already has a two-handed weapon equipped in the right hand.");
         return;
     }
-    
+       
     // 3. Escanear o inventário
     std::vector<RE::TESObjectWEAP*> suitableWeapons;
     auto inventory = npc->GetInventory();
@@ -239,7 +95,8 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
 
         // --- CORREÇÃO APLICADA ---
         // Chame a nova função centralizada em vez de duas chamadas separadas
-        EquipDualTwoHanded_NPC(npc, weapon1, weapon2);
+        EquipItemWithGripChange(npc, weapon1, Hooks::g_rightHandSlot);
+        EquipItemWithGripChange(npc, weapon2, Hooks::g_leftHandSlot);
         npc->SetGraphVariableInt("CycleMovesetNpcType", 1);  
 
     } else {
@@ -361,6 +218,7 @@ RE::BSEventNotifyControl GlobalControl::InputListener::ProcessEvent(RE::InputEve
         return RE::BSEventNotifyControl::kContinue;
     }
 }
+
 
 // Esta função calcula o valor final da sua variável
 void GlobalControl::InputListener::UpdateDirectionalState() {
@@ -546,10 +404,17 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
     if (!g_isWeaponDrawn) {
         return;
     }
-
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;
+    auto animManager = AnimationManager::GetSingleton();
+    std::string categoryName = GetCurrentWeaponCategoryName();
     switch (eventype) {
         case SkyPromptAPI::kAccepted:
             if(!except) {
+                const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+                if (availableStances.empty()) {
+                    return;  // Não faz nada se não houver stances disponíveis
+                }
                 except = true;
                 GlobalControl::StanceChangesOpen = true;
                 SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
@@ -586,8 +451,6 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
             g_currentStance = 0;
             UpdatePowerAttackGlobals();
             UpdateSkyPromptTexts();
-            //StanceText = "Stances";
-            //MovesetText = "Movesets";
             SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
             RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
@@ -606,38 +469,35 @@ std::span<const SkyPromptAPI::Prompt> GlobalControl::StancesChangesSink::GetProm
     return prompts; }
 
 void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
+    auto player = RE::PlayerCharacter::GetSingleton();
     std::string categoryName = GetCurrentWeaponCategoryName();
-    const auto& category = AnimationManager::GetSingleton()->GetCategories().at(categoryName);
-    const int numStances = category.instances.size();
+    auto animManager = AnimationManager::GetSingleton();
+    const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    const int numStances = availableStances.size();
+    bool stanceChanged = false;  // Flag para saber se a stance realmente mudou
+    int oldStanceListIndex = (g_currentStance > 0 && g_currentStance <= numStances) ? g_currentStance - 1 : -1;
+    int originalStanceIndexBeforeChange =
+        (oldStanceListIndex != -1) ? availableStances[oldStanceListIndex].originalIndex : 0;
 
     switch (event.type) {
         case SkyPromptAPI::kAccepted:
-            if (event.prompt.eventID == 2) {
-                g_currentStance -= 1;
-                if (g_currentStance < 1) {
-                    g_currentStance = numStances;  // Vai para o último
+            if (event.prompt.eventID == 2 || event.prompt.eventID == 3) {  // Next ou Back
+                if (numStances > 0) {                                      // Só muda se houver stances disponíveis
+                    int oldStanceValue = g_currentStance;                  // Guarda o valor *antes* de mudar
+                    if (event.prompt.eventID == 2) {                       // Back
+                        g_currentStance = (g_currentStance - 1);
+                        if (g_currentStance < 1) g_currentStance = numStances;  // Cicla para o fim
+                    } else {                                                    // Next (event.prompt.eventID == 3)
+                        g_currentStance = (g_currentStance % numStances) + 1;   // Cicla para o início
+                    }
+
+                    // Verifica se o valor realmente mudou
+                    if (g_currentStance != oldStanceValue) {
+                        stanceChanged = true;  // Define a flag AQUI
+                    }
                 }
-                UpdatePowerAttackGlobals();
-                UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-                break;
             }
-            if (event.prompt.eventID == 3) {
-                g_currentStance += 1;
-                if (g_currentStance > numStances) {
-                    g_currentStance = 1;  // Volta para o primeiro
-                }
-                UpdatePowerAttackGlobals();
-                UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
-                break;
-            }
+            break;  // Sai do case kAccepted
         case SkyPromptAPI::kTimeout:
             SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
             break;
@@ -656,13 +516,124 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
             }
             break;
     }
+    if (stanceChanged) {
+        int currentListIndex = (g_currentStance > 0) ? g_currentStance - 1 : -1;
+        int originalStanceIndexToApply = (currentListIndex != -1) ? availableStances[currentListIndex].originalIndex
+                                                                  : 0;  // 0 se g_currentStance for 0
 
-    // REQUERIMENTO 5: Mostra a nova contagem (x/y) imediatamente
-    GlobalControl::StanceChangesOpen = true;
-    logger::info("O valor de MovesetText é: {}", MovesetText);
-    g_currentMoveset = 1;
-    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
-    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance", g_currentStance);  
+        // 1. Aplica a nova stance no jogo (ou 0 se resetado)
+        RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance", originalStanceIndexToApply);
+
+        // 2. Reseta o moveset e aplica o primeiro disponível (ou 0)
+        g_currentMoveset = 0;  // Começa resetado
+        int originalMovesetIndexToApply = 0;
+        const ModInstance* firstModInst = nullptr;           // Ponteiro para o ModInstance do primeiro moveset
+        const SubAnimationInstance* firstSubInst = nullptr;  // Ponteiro para o SubAnimationInstance do primeiro moveset
+        std::vector<AppliedEffect> firstMovesetCombinedEffects;  // Guarda os efeitos combinados do primeiro moveset
+        if (originalStanceIndexToApply > 0) {                    // Se temos uma stance válida
+            const auto availableMovesets =
+                animManager->GetAvailableMovesets(player, categoryName, originalStanceIndexToApply);
+            if (!availableMovesets.empty()) {
+                g_currentMoveset = 1;                                              // Seleciona o primeiro da lista
+                originalMovesetIndexToApply = availableMovesets[0].originalIndex;  // Pega o índice real
+
+                // --- NOVA LÓGICA: Coleta os efeitos do primeiro moveset ---
+                auto cat_it = animManager->GetCategories().find(categoryName);
+                if (cat_it != animManager->GetCategories().end()) {
+                    const WeaponCategory& category = cat_it->second;
+                    if (originalStanceIndexToApply > 0 && originalStanceIndexToApply <= category.instances.size()) {
+                        const auto& stanceInstance = category.instances[originalStanceIndexToApply - 1];
+                        // Efeitos da Stance (sempre incluídos nos efeitos do moveset)
+                        firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                           stanceInstance.appliedEffects.begin(),
+                                                           stanceInstance.appliedEffects.end());
+
+                        // Encontra o ModInstance e SubAnimationInstance do *primeiro* moveset
+                        // (originalMovesetIndexToApply)
+                        int parentCounter = 0;
+                        auto& mutableStanceInstance =
+                            const_cast<CategoryInstance&>(stanceInstance);  // Necessário para iterar
+                        for (const auto& modInst : mutableStanceInstance.modInstances) {
+                            if (!modInst.isSelected) continue;
+                            for (const auto& subInst : modInst.subAnimationInstances) {
+                                bool isParent = !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                                  subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                                  subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+                                if (!subInst.isSelected || !isParent) continue;
+                                parentCounter++;
+                                if (parentCounter == originalMovesetIndexToApply) {  // Achou o primeiro moveset
+                                    firstModInst = &modInst;
+                                    firstSubInst = &subInst;
+                                    goto found_first_moveset;  // Sai dos loops
+                                }
+                            }
+                        }
+                    found_first_moveset:;  // Label para o goto
+                        if (firstModInst) {
+                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                               firstModInst->appliedEffects.begin(),
+                                                               firstModInst->appliedEffects.end());
+                        }
+                        if (firstSubInst) {
+                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                               firstSubInst->appliedEffects.begin(),
+                                                               firstSubInst->appliedEffects.end());
+                        }
+                        // Remove duplicatas
+                        std::sort(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end());
+                        firstMovesetCombinedEffects.erase(
+                            std::unique(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end()),
+                            firstMovesetCombinedEffects.end());
+                    }
+                }
+                // --- FIM DA NOVA LÓGICA ---
+            }
+        }
+        RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndexToApply);
+
+        // 3. Coleta os efeitos da NOVA stance (será vazio se g_currentStance == 0)
+        std::vector<AppliedEffect> newStanceEffects;
+        if (originalStanceIndexToApply > 0) {
+            auto cat_it = animManager->GetCategories().find(categoryName);
+            if (cat_it != animManager->GetCategories().end()) {
+                const WeaponCategory& category = cat_it->second;
+                if (originalStanceIndexToApply <= category.instances.size()) {
+                    newStanceEffects = category.instances[originalStanceIndexToApply - 1].appliedEffects;
+                }
+            }
+        }
+
+        // 4. Aplica/Remove efeitos da Stance
+        //    ApplyAndTrackEffects compara newStanceEffects com g_lastAppliedStanceEffects.
+        //    - Efeitos em g_lastAppliedStanceEffects que NÃO estão em newStanceEffects são REMOVIDOS.
+        //    - Efeitos em newStanceEffects que NÃO estão em g_lastAppliedStanceEffects são ADICIONADOS.
+        //    - g_lastAppliedStanceEffects é atualizado para ser igual a newStanceEffects.
+        SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos da Stance {}", newStanceEffects.size(),
+                        g_currentStance);
+        SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos combinados do Moveset Padrão (Lista Index {})",
+                        firstMovesetCombinedEffects.size(), g_currentMoveset);
+        ApplyAndTrackEffects(player, newStanceEffects, g_lastAppliedStanceEffects);
+        ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
+
+
+        // 6. Atualiza outras lógicas e a UI
+        UpdatePowerAttackGlobals();  // Atualiza DPA/CPA baseado na nova stance/moveset
+        UpdateSkyPromptTexts();      // Atualiza TODOS os textos da UI para refletir o novo estado
+
+        // 7. Reenvia os prompts do menu ATUAL (StancesChangesSink) para mostrar o nome correto
+        if (GlobalControl::StanceChangesOpen) {  // Só reenvia se o menu ainda estiver aberto
+            SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+        } else {  // Se foi um kDeclined, reenvia os menus principais
+            SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
+            SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
+        }
+
+    } else if (event.type == SkyPromptAPI::kAccepted) {
+        // Se kAccepted foi pressionado mas stanceChanged é false (ex: só tem 1 stance),
+        // apenas reenvia o prompt atual para resetar o timer.
+        SkyPromptAPI::SendPrompt(StancesChangesSink::GetSingleton(), MenuShowing);
+    }
+
 }
 
 std::span<const SkyPromptAPI::Prompt> GlobalControl::MovesetSink::GetPrompts() const {
@@ -673,10 +644,27 @@ void GlobalControl::MovesetSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
     if (!g_isWeaponDrawn) {
         return;
     }
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;
+    auto animManager = AnimationManager::GetSingleton();
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    int originalStanceIndex = 0;
+
+    if (g_currentStance > 0 && g_currentStance <= availableStances.size()) {
+        originalStanceIndex = availableStances[g_currentStance - 1].originalIndex;
+    } else if (g_currentStance == 0 && !availableStances.empty()) {
+        originalStanceIndex = availableStances[0].originalIndex;
+    }
     switch (eventype) {
 
         case SkyPromptAPI::kAccepted:
             if (!except) {
+                const auto availableMovesets =
+                    animManager->GetAvailableMovesets(player, categoryName, originalStanceIndex);
+                if (availableMovesets.empty()) {
+                    return;  // Não faz nada se não houver movesets
+                }
                 except = true;
                 GlobalControl::MovesetChangesOpen = true;
                 /*if (!Settings::ShowMenu) {
@@ -717,11 +705,23 @@ std::span<const SkyPromptAPI::Prompt> GlobalControl::MovesetChangesSink::GetProm
 
 void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
 
-    // REQUERIMENTO 1, 2, 3: Pegar todas as informações necessárias
-    std::string category = GetCurrentWeaponCategoryName();
-    // O índice do cache é 0-3, mas a stance no jogo é 1-4.
-    int stanceIndex = GlobalControl::g_currentStance - 1;
-    int maxMovesets = AnimationManager::GetMaxMovesetsFor(category, stanceIndex);
+    auto player = RE::PlayerCharacter::GetSingleton();
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    auto animManager = AnimationManager::GetSingleton();
+
+    // O índice da stance (g_currentStance) ainda está no formato de lista (ex: 2 de 2)
+    // Precisamos encontrar o índice original que ele representa.
+    int stanceOriginalIndex = g_currentStance;  // Fallback
+    auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    if (g_currentStance > 0 && g_currentStance <= availableStances.size()) {
+        stanceOriginalIndex = availableStances[g_currentStance - 1].originalIndex;
+    }
+
+    // SUBSTITUA ISSO:
+    // int maxMovesets = AnimationManager::GetMaxMovesetsFor(category, stanceIndex);
+    // POR ISSO:
+    const auto availableMovesets = animManager->GetAvailableMovesets(player, categoryName, stanceOriginalIndex);
+    const int maxMovesets = availableMovesets.size();
 
     // Se não há movesets configurados para esta stance/arma, não faz nada.
     if (maxMovesets <= 0) {
@@ -739,8 +739,6 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 }
                 UpdatePowerAttackGlobals();
                 UpdateSkyPromptTexts();
-                logger::info("teste {}", MovesetText);
-                RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
@@ -752,8 +750,6 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                 }
                 UpdatePowerAttackGlobals();
                 UpdateSkyPromptTexts();
-                logger::info("teste {}", MovesetText);
-                RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
                 SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
                 SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
                 break;
@@ -774,6 +770,9 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
             logger::info("kUp aceito");
             break;
     }
+    int currentListIndex = g_currentMoveset - 1;  // 0-based index
+    int originalMovesetIndex = availableMovesets[currentListIndex].originalIndex;
+    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndex);
     
 }
 
@@ -838,6 +837,191 @@ RE::BSEventNotifyControl GlobalControl::ActionEventHandler::ProcessEvent(const S
 }
 
 
+
+void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst,
+                                         std::vector<AppliedEffect>& lastAppliedEffects) {
+    if (!actor) return;
+    // Só aplicamos ao jogador por enquanto, pode ser expandido para NPCs depois
+    if (!actor->IsPlayerRef()) return;
+
+    // Usamos cópias para poder ordenar sem modificar os originais
+    std::vector<AppliedEffect> newEffects = newEffectsConst;
+    std::vector<AppliedEffect> oldEffects = lastAppliedEffects;
+
+    // Ordena ambas as listas para usar algoritmos eficientes
+    std::sort(newEffects.begin(), newEffects.end());
+    std::sort(oldEffects.begin(), oldEffects.end());
+
+    // 1. Encontra efeitos para REMOVER (presentes em oldEffects, mas NÃO em newEffects)
+    std::vector<AppliedEffect> toRemove;
+    std::set_difference(oldEffects.begin(), oldEffects.end(), newEffects.begin(), newEffects.end(),
+                        std::back_inserter(toRemove));
+
+    for (const auto& effect : toRemove) {
+        RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
+        if (!form) {
+            SKSE::log::warn("ApplyAndTrackEffects: FormID {:08X} não encontrado para remoção.", effect.formID);
+            continue;
+        }
+
+        switch (effect.type) {
+            case AppliedEffect::EffectType::Perk:
+                if (auto perk = form->As<RE::BGSPerk>()) {
+                    if (actor->HasPerk(perk)) {  // Verifica antes de remover
+                        SKSE::log::info("Removendo Perk: {}", perk->GetName());
+                        actor->RemovePerk(perk);
+                    }
+                }
+                break;
+            case AppliedEffect::EffectType::MagicEffect:
+                // A remoção de MGEF direto é complexa. A forma mais comum é remover
+                // o SPELL que o aplicou. Se o MGEF foi aplicado por um spell
+                // adicionado por esta função, a lógica abaixo funciona.
+            case AppliedEffect::EffectType::Spell:
+                if (auto spell = form->As<RE::SpellItem>()) {
+                    if (actor->HasSpell(spell)) {  // Verifica antes de remover
+                        SKSE::log::info("Removendo Spell/Effect Source: {}", spell->GetName());
+                        actor->RemoveSpell(spell);
+                        // IMPORTANTE: Isso remove o spell da lista, mas não necessariamente
+                        // remove MGEFs ativos instantaneamente se eles tiverem duração.
+                        // Pode ser necessário usar Dispel ou funções SKSE mais avançadas se
+                        // a remoção imediata de MGEFs for crucial.
+                    }
+                }
+                break;
+        }
+    }
+
+    // 2. Encontra efeitos para ADICIONAR (presentes em newEffects, mas NÃO em oldEffects)
+    std::vector<AppliedEffect> toAdd;
+    std::set_difference(newEffects.begin(), newEffects.end(), oldEffects.begin(), oldEffects.end(),
+                        std::back_inserter(toAdd));
+
+    for (const auto& effect : toAdd) {
+        RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
+        if (!form) {
+            SKSE::log::warn("ApplyAndTrackEffects: FormID {:08X} não encontrado para adição.", effect.formID);
+            continue;
+        }
+
+        switch (effect.type) {
+            case AppliedEffect::EffectType::Perk:
+                if (auto perk = form->As<RE::BGSPerk>()) {
+                    if (!actor->HasPerk(perk)) {  // Verifica antes de adicionar
+                        SKSE::log::info("Adicionando Perk: {}", perk->GetName());
+                        actor->AddPerk(perk, 1);  // Adiciona rank 1
+                    }
+                }
+                break;
+            case AppliedEffect::EffectType::MagicEffect:
+                if (auto mgef = form->As<RE::EffectSetting>()) {
+                    // Aplicar MGEF diretamente é difícil. A abordagem padrão é
+                    // criar/encontrar um Spell que contenha APENAS este MGEF
+                    // e adicioná-lo ao jogador.
+                    SKSE::log::warn("Aplicação direta de Magic Effect ({}) não é ideal. Considere usar um Spell.",
+                                    mgef->GetName());
+                    // Exemplo (requer helper GetOrCreateSpellForMGEF):
+                    // RE::SpellItem* dummySpell = GetOrCreateSpellForMGEF(mgef);
+                    // if (dummySpell && !actor->HasSpell(dummySpell)) {
+                    //     actor->AddSpell(dummySpell);
+                    // }
+                }
+                break;
+            case AppliedEffect::EffectType::Spell:
+                //if (auto spell = form->As<RE::SpellItem>()) {
+                //    // Adiciona Habilidades/Poderes Menores passivamente
+                //    if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
+                //        spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
+                //        if (!actor->HasSpell(spell)) {
+                //            SKSE::log::info("Adicionando Habilidade/Poder Menor: {} ({:08X})", spell->GetName(),
+                //                            spell->GetFormID());
+                //            actor->AddSpell(spell);
+                //        }
+                //    } else {  // Casta outros tipos de Spells
+                //        SKSE::log::info("Tentando castar Spell: {} ({:08X})", spell->GetName(), spell->GetFormID());
+
+                //        // --- CORREÇÃO: Usar função membro do Actor ou utility function ---
+                //        // Verifica se o ator pode castar usando o MagicCaster apropriado
+                //        auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
+                //        RE::MagicSystem::CannotCastReason reason;
+                //        if (caster && actor->CheckCast(spell, false, &reason)) {  // Usa CheckCast do Actor
+                //            // Se puder castar, inicia o cast usando uma função apropriada.
+                //            // Muitas vezes, para casts instantâneos "fire and forget",
+                //            // AddSpell pode ser suficiente se o spell tiver as flags corretas,
+                //            // ou usamos funções de nível superior se disponíveis.
+                //            // Uma alternativa comum é usar Papyrus ou SKSE para iniciar o cast.
+
+                //            // Tentativa 1: Usar AddSpell pode funcionar para alguns spells "fire and forget"
+                //            // actor->AddSpell(spell); // Isso pode não *castar* imediatamente.
+
+                //            // Tentativa 2: A forma mais robusta costuma ser via SKSE ou Papyrus Utils se disponíveis.
+                //            // Exemplo com SKSE (se você tiver SKSE/Papyrus integrado):
+                //            // auto papyrusVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+                //            // RE::BSTSmartPointer<RE::BSScript::IObjectHandlePolicy> policy; // Obtenha a policy
+                //            // RE::VMHandle handle = policy->GetHandleForObject(actor->GetFormType(), actor);
+                //            // if(papyrusVm && handle != policy->EmptyHandle()) {
+                //            //    auto args = RE::MakeFunctionArguments(spell);
+                //            //    papyrusVm->DispatchStaticCall("Actor", "Cast", args); // Chamando Actor.Cast() do
+                //            //    Papyrus SKSE::log::info("Cast iniciado via Papyrus Actor.Cast");
+                //            // } else {
+                //            //    SKSE::log::error("Falha ao obter VM ou Handle para castar {}", spell->GetName());
+                //            // }
+
+                //            // *** Solução de Fallback Comum (usando funções do jogo via RE/REL) ***
+                //            // Se as opções acima não funcionarem, esta é uma forma mais direta,
+                //            // embora dependa de encontrar o offset correto para a função de cast.
+                //            // Esta função específica pode variar, mas uma candidata comum é:
+                //            using CastFunction = void (*)(RE::MagicCaster*, RE::MagicItem*, bool, float, bool, float,
+                //                                          RE::TESObjectREFR*);
+                //            // Obtenha o endereço da função (pode precisar de REL::ID ou Offset Scanner)
+                //            // REL::Relocation<CastFunction> func{ REL::ID(xxxxx) }; // Substitua xxxxx pelo ID correto
+                //            // if (func) {
+                //            //    func(caster, spell, false, 1.0f, false, 0.0f, actor); // Chama a função do jogo
+                //            //    SKSE::log::info("Cast iniciado via função nativa.");
+                //            // } else {
+                //            //    SKSE::log::error("Função nativa de Cast não encontrada.");
+                //            // }
+
+                //            // *** A Opção Mais Simples (mas pode não ser ideal para todos os spells): Adicionar e
+                //            // Remover *** Isso garante que os MGEFs sejam aplicados, mas não é um "cast" real.
+                //            if (!actor->HasSpell(spell)) {  // Evita adicionar múltiplas vezes
+                //                SKSE::log::info("Adicionando Spell (como habilidade temporária): {}", spell->GetName());
+                //                actor->AddSpell(spell);
+                //                // Idealmente, você precisaria de um mecanismo para remover este spell depois,
+                //                // talvez ao trocar de stance/moveset novamente, usando a lógica de `toRemove`.
+                //            }
+
+                //        } else {
+                //            SKSE::log::warn("Não foi possível castar {}. Razão: {}", spell->GetName(),
+                //                            static_cast<int>(reason));
+                //        }
+                //    }
+                //}
+                if (auto spell = form->As<RE::SpellItem>()) {
+                    // --- CORREÇÃO: Simplificado para sempre usar AddSpell ---
+                    // Verifica se o ator já não tem o spell antes de adicionar
+                    if (!actor->HasSpell(spell)) {
+                        // Adiciona QUALQUER tipo de spell configurado passivamente
+                        SKSE::log::info("Adicionando Spell (passivo): {} ({:08X})", spell->GetName(),
+                                        spell->GetFormID());
+                        actor->AddSpell(spell);
+                        // A lógica em 'toRemove' cuidará da remoção posterior.
+                    } else {
+                        SKSE::log::debug("Spell {} ({:08X}) já presente no ator.", spell->GetName(),
+                                         spell->GetFormID());
+                    }
+                    // --- FIM DA CORREÇÃO ---
+                } else {
+                    SKSE::log::warn("FormID {:08X} (Plugin: {}) não é um SpellItem válido para adição.", effect.formID,
+                                    effect.pluginName);
+                }
+                break;
+        }
+    }
+
+    // 3. Atualiza a lista de rastreamento para a próxima mudança
+    lastAppliedEffects = newEffectsConst;  // Armazena a lista NÃO ordenada original
+}
 
 void GlobalControl::TriggerSmartRandomNumber([[maybe_unused]] const std::string& eventSource) {
     auto player = RE::PlayerCharacter::GetSingleton();
@@ -931,8 +1115,7 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
         // event->opening é 'true' se o menu está abrindo, e 'false' se está fechando.
         // Nós simplesmente atribuímos esse valor à nossa flag.
         Hooks::is_open.store(event->opening);
-        logger::info("Menu relevante '{}' mudou de estado. is_open agora é: {}", event->menuName.c_str(),
-                     event->opening);
+        //logger::info("Menu relevante '{}' mudou de estado. is_open agora é: {}", event->menuName.c_str(),event->opening);
     }
     if (event->opening) {
 
@@ -1040,8 +1223,7 @@ RE::BSEventNotifyControl GlobalControl::NpcCycleSink::ProcessEvent(const RE::BSA
         auto npc = const_cast<RE::Actor*>(actor);
         const RE::FormID formID = actor->GetFormID();
         const std::string_view eventName = a_event->tag;
-        logger::info("[NPC Anim Event] Ator: '{}' ({:08X}), Evento: '{}'", actor->GetName(), actor->GetFormID(),
-                     eventName);
+        //logger::info("[NPC Anim Event] Ator: '{}' ({:08X}), Evento: '{}'", actor->GetName(), actor->GetFormID(),eventName);
 
         if (eventName == "weaponSwing") {
             // --- Lógica de atualização com Mutex ---
@@ -1062,7 +1244,7 @@ RE::BSEventNotifyControl GlobalControl::NpcCycleSink::ProcessEvent(const RE::BSA
             if (g_npcComboStates.count(formID)) {
                 g_npcComboStates[formID].isTimerRunning = false;
             }
-            CheckAndEquipDualTwoHandedForNPC(npc);
+            
         }
     }
     // Lista para guardar os FormIDs dos atores cujo combo expirou.
@@ -1200,9 +1382,11 @@ RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE:
         switch (a_event->newState.get()) {
             case RE::ACTOR_COMBAT_STATE::kCombat:
                 GlobalControl::NpcCombatTracker::RegisterSink(npc);
+                CheckAndEquipDualTwoHandedForNPC(npc);
                 break;
             case RE::ACTOR_COMBAT_STATE::kNone:
                 GlobalControl::NpcCombatTracker::UnregisterSink(npc);
+                CheckAndEquipDualTwoHandedForNPC(npc);
                 break;
         }
     }
@@ -1247,12 +1431,16 @@ void GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants() {
     for (auto& actorHandle : processLists->highActorHandles) {
         if (auto actor = actorHandle.get().get()) {
             // A função IsInCombat() nos diz se o ator já está em um estado de combate
-            if (!actor->IsPlayerRef() && actor->IsInCombat()) {
-                SKSE::log::info("[NpcCombatTracker] Ator '{}' ({:08X}) já está em combate. Registrando sink...",
-                                actor->GetName(), actor->GetFormID());
-                // Usamos a mesma função de registro que já existe!
-                RegisterSink(actor);
+            if (!actor->IsPlayerRef()) {
+                CheckAndEquipDualTwoHandedForNPC(actor);
+                if (actor->IsInCombat()) {
+                    SKSE::log::info("[NpcCombatTracker] Ator '{}' ({:08X}) já está em combate. Registrando sink...",
+                                    actor->GetName(), actor->GetFormID());
+                    // Usamos a mesma função de registro que já existe!
+                    RegisterSink(actor);
+                }
             }
+
         }
     }
     SKSE::log::info("[NpcCombatTracker] Verificação concluída.");
@@ -1260,50 +1448,95 @@ void GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants() {
 
 void GlobalControl::UpdateSkyPromptTexts() {
     auto animManager = AnimationManager::GetSingleton();
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;  // Não faz nada se o jogador não existir
+
     std::string categoryName = GetCurrentWeaponCategoryName();
-    auto categoryIt = animManager->GetCategories().find(categoryName);
-    const auto& category = categoryIt->second;
-    const int numStances = category.stanceNames.size();
+
+    // --- NOVA LÓGICA PARA STANCES ---
+
+    // 1. Busca APENAS as stances que o jogador pode usar (com perks e não vazias)
+    const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    const int numStances = availableStances.size();
+    int currentStanceListIndex = -1;  // Índice na lista (0-based)
+    int originalStanceIndex = 0;      // Índice real da stance (1-based)
     // --- LÓGICA PARA STANCES  ---
-    if (g_currentStance == 0) {
-        StanceText = "Stances";
-        StanceNextText = animManager->GetStanceName(categoryName, 0);
-        StanceBackText = animManager->GetStanceName(categoryName, numStances - 1);
+    if (g_currentStance > 0 && g_currentStance <= numStances) {
+        currentStanceListIndex = g_currentStance - 1;
+        originalStanceIndex = availableStances[currentStanceListIndex].originalIndex;
     } else {
-        int currentStanceIndex = g_currentStance - 1;
-        // CORREÇÃO: Lógica de ciclo dinâmica
-        int nextStanceIndex = (currentStanceIndex + 1) >= numStances ? 0 : currentStanceIndex + 1;
-        int backStanceIndex = (currentStanceIndex - 1) < 0 ? numStances - 1 : currentStanceIndex - 1;
-
-        StanceText = animManager->GetStanceName(categoryName, currentStanceIndex);
-        StanceNextText = animManager->GetStanceName(categoryName, nextStanceIndex);
-        StanceBackText = animManager->GetStanceName(categoryName, backStanceIndex);
+        g_currentStance = 0;  // Reseta se o índice for inválido (ex: mudou de arma)
     }
-    int validStanceIndexForMoveset = g_currentStance - 1;
 
-    // --- LÓGICA PARA MOVESETS  ---
-    int maxMovesets = animManager->GetMaxMovesetsFor(categoryName, validStanceIndexForMoveset);
-    int currentMovesetIndex = g_currentMoveset;  // 1-N
+    if (g_currentStance == 0) {
+        StanceText = "Styles";                                                     // Texto padrão
+        StanceNextText = (numStances > 0) ? availableStances[0].name : "Next";      // Próximo é o primeiro da lista
+        StanceBackText = (numStances > 0) ? availableStances.back().name : "Back";  // Anterior é o último da lista
+    } else {
+        // Calcula os índices de ciclo DENTRO da lista de stances disponíveis
+        int nextListIndex = (currentStanceListIndex + 1) % numStances;
+        int backListIndex = (currentStanceListIndex - 1 + numStances) % numStances;
+
+        // Pega os nomes da nossa lista
+        StanceText = availableStances[currentStanceListIndex].name;
+        StanceNextText = availableStances[nextListIndex].name;
+        StanceBackText = availableStances[backListIndex].name;
+    }
+
+    // --- NOVA LÓGICA PARA MOVESETS ---
+
+    // 2. Busca APENAS os movesets disponíveis para a stance selecionada
+    const auto availableMovesets = animManager->GetAvailableMovesets(player, categoryName, originalStanceIndex);
+    const int maxMovesets = availableMovesets.size();
+
+    int currentMovesetListIndex = -1;  // Índice na lista (0-based)
+    int originalMovesetIndex = 0;      // Índice real do moveset (1-based)
+
+    if (g_currentMoveset > 0 && g_currentMoveset <= maxMovesets) {
+        currentMovesetListIndex = g_currentMoveset - 1;
+        originalMovesetIndex = availableMovesets[currentMovesetListIndex].originalIndex;
+    } else {
+        g_currentMoveset = (maxMovesets > 0) ? 1 : 0;  // Reseta para 1 se houver movesets, 0 se não
+        if (g_currentMoveset > 0) {
+            currentMovesetListIndex = 0;
+            originalMovesetIndex = availableMovesets[0].originalIndex;
+        }
+    }
+
+    // O GetCurrentMovesetName ainda é útil pois ele lida com a lógica de nomes direcionais
+    // Mas agora passamos os índices ORIGINAIS corretos para ele.
+    int stanceIdxForName =
+        (originalStanceIndex > 0) ? originalStanceIndex - 1 : -1;  // Converte de 1-based para 0-based
+
     if (maxMovesets > 0) {
         int dirState = InputListener::GetDirectionalState();
-        //SKSE::log::info("[UpdateSkyPromptTexts] Chamando GetCurrentMovesetName com dirState: {}", dirState);
+
         std::string currentMovesetName =
-            animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, currentMovesetIndex, dirState);
-        MovesetText = std::format("{} ({}/{})", currentMovesetName, currentMovesetIndex, maxMovesets);
+            animManager->GetCurrentMovesetName(player, categoryName, stanceIdxForName, originalMovesetIndex, dirState);
+
+        // Mostra o índice da LISTA (ex: 1/2) e não o índice original
+        MovesetText = std::format("{} ({}/{})", currentMovesetName, g_currentMoveset, maxMovesets);
 
         if (maxMovesets > 1) {
-            int nextMovesetIndex = (currentMovesetIndex % maxMovesets) + 1;
-            int backMovesetIndex = (currentMovesetIndex - 2 + maxMovesets) % maxMovesets + 1;
+            // Calcula os próximos índices na LISTA
+            int nextMovesetListIndex = (currentMovesetListIndex + 1) % maxMovesets;
+            int backMovesetListIndex = (currentMovesetListIndex - 1 + maxMovesets) % maxMovesets;
+
+            // Pega os índices ORIGINAIS correspondentes
+            int nextOriginalIndex = availableMovesets[nextMovesetListIndex].originalIndex;
+            int backOriginalIndex = availableMovesets[backMovesetListIndex].originalIndex;
+
+            // Busca os nomes usando os índices ORIGINAIS
             MovesetNextText =
-                animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, nextMovesetIndex, 0);
+                animManager->GetCurrentMovesetName(player,categoryName, stanceIdxForName, nextOriginalIndex, 0);
             MovesetBackText =
-                animManager->GetCurrentMovesetName(categoryName, validStanceIndexForMoveset, backMovesetIndex, 0);
+                animManager->GetCurrentMovesetName(player,categoryName, stanceIdxForName, backOriginalIndex, 0);
         } else {
             MovesetNextText = "Back";
             MovesetBackText = "Next";
         }
     } else {
-        MovesetText = "Movesets";
+        MovesetText = "Moves";
         MovesetNextText = "Back";
         MovesetBackText = "Next";
     }
@@ -1449,7 +1682,7 @@ void GlobalControl::UpdatePromptVisibility() {
 
     if (shouldBeVisible && !Cycleopen) {
         // CONDIÇÃO: Deveriam estar visíveis, mas não estão -> MOSTRAR
-        logger::info("[UpdatePromptVisibility] Condições atendidas. Mostrando prompts.");
+        //logger::info("[UpdatePromptVisibility] Condições atendidas. Mostrando prompts.");
         Cycleopen = true;
         // Talvez seja necessário atualizar os textos antes de enviar
         UpdateSkyPromptTexts();
@@ -1458,13 +1691,24 @@ void GlobalControl::UpdatePromptVisibility() {
 
     } else if (!shouldBeVisible && Cycleopen) {
         // CONDIÇÃO: Não deveriam estar visíveis, mas estão -> ESCONDER
-        logger::info("[UpdatePromptVisibility] Condições não atendidas. Escondendo prompts.");
+        //logger::info("[UpdatePromptVisibility] Condições não atendidas. Escondendo prompts.");
         Cycleopen = false;
         SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
         SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
         SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
         SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
     }
+}
+
+void GlobalControl::Intall() {
+    auto& trampoline = SKSE::GetTrampoline();
+    constexpr size_t size_per_hook = 14;
+    trampoline.create(size_per_hook * 3);
+    const REL::Relocation<std::uintptr_t> target{REL::RelocationID(37938, 38894)};  
+    Equip2H::func =
+        trampoline.write_call<5>(target.address() + REL::Relocate(0xe5, 0x170), Equip2H::thunk);
+    const REL::Relocation<std::uintptr_t> targetU{REL::RelocationID(37945, 38901)};  
+    Unequip2H::func = trampoline.write_call<5>(targetU.address() + REL::Relocate(0x138, 0x1b9), Unequip2H::thunk);
 }
 
 std::span<const SkyPromptAPI::Prompt> GlobalControl::EquipMenu::GetPrompts() const { return prompts; }
@@ -1501,6 +1745,10 @@ void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) con
             logger::info("Equipando {} na mão direita.", itemToEquip->GetName());
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_rightHandSlot);
             break;
+        case 2:  // Equipar nas duas mãos
+            logger::info("Equipando {} nas duas maos.", itemToEquip->GetName());
+            EquipItemWithGripChange(player, itemToEquip, Hooks::g_twoHandSlot);
+            break;
     }
 }
 
@@ -1522,12 +1770,11 @@ void GlobalControl::EquipMenu::Show(const RE::TESBoundObject* a_weapon) const {
     }
 
     // Agora que os prompts têm o refid correto, nós os enviamos.
-    SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip);  // Use seu ClientID aqui
+    SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip);  
 }
 
 void GlobalControl::EquipMenu::Hide() const {
-    // Simplesmente remove os prompts
-    SkyPromptAPI::RemovePrompt(this, GlobalControl::Dynamicgrip);  // Use seu ClientID aqui
+    SkyPromptAPI::RemovePrompt(this, GlobalControl::Dynamicgrip);  
 }
 
 RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::TESEquipEvent* a_event,
@@ -1538,31 +1785,58 @@ RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::T
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    // Acessa o inventário do jogador para ver o que está realmente equipado
-    if (auto invChanges = player->GetInventoryChanges()) {
-        if (auto entryList = invChanges->entryList) {
-            // Itera sobre todos os itens equipados
-            for (auto& entry : *entryList) {
-    #ifdef GetObject
-    #undef GetObject
-    #endif
-                if (entry && entry->GetObject() && entry->IsWorn()) {
-                    auto item = entry->GetObject();
+    return RE::BSEventNotifyControl::kContinue;
+}
 
-                    // Se encontrarmos uma arma de 2 mãos que está com o slot ERRADO...
-                    if (isTwoHanded(item)) {  // 'isTwoHanded' é a função que já criamos
-                        auto weapon = item->As<RE::TESObjectWEAP>();
-                        if (weapon->GetEquipSlot() != Hooks::g_twoHandSlot) {
-                            // ...nós a CORRIGIMOS imediatamente!
-                            logger::warn("Arma de duas mãos '{}' encontrada com slot incorreto. Corrigindo.",
-                                         weapon->GetName());
-                            weapon->SetEquipSlot(Hooks::g_twoHandSlot);
-                        }
-                    }
-                }
-            }
+
+
+void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData,
+                                   int count, std::int64_t* equipSlot, char queueEquip, char forceEquip,
+                                   char playSounds, char applyNow) {
+    RE::TESObjectWEAP* weapon = nullptr;
+    RE::BGSEquipSlot* originalSlot = nullptr;
+
+    // 1. VERIFICAR E ALTERAR (ANTES de chamar func)
+    if (a_form && a_form->IsWeapon() && isTwoHanded(a_form)) {
+        weapon = a_form->As<RE::TESObjectWEAP>();
+        originalSlot = weapon->GetEquipSlot();  // Salva o slot original (ex: g_twoHandSlot)
+
+        // Força o jogo a pensar que é um item de mão direita
+        
+        weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+        func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
+
+        // 3. RESTAURAR (DEPOIS de chamar func)
+        if (weapon && originalSlot) {
+            // Restaura o slot original para o estado normal (2H)
+            weapon->SetEquipSlot(originalSlot);
         }
+        return;
     }
 
-    return RE::BSEventNotifyControl::kContinue;
+    
+    return func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, forceEquip, playSounds, applyNow);
+}
+
+std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form,
+                                             std::int64_t* extraData) {
+    RE::TESObjectWEAP* weapon = nullptr;
+    RE::BGSEquipSlot* originalSlot = nullptr;
+
+    // 1. VERIFICAR E ALTERAR (ANTES de chamar func)
+    if (a_form && a_form->IsWeapon() && isTwoHanded(a_form)) {
+        weapon = a_form->As<RE::TESObjectWEAP>();
+        originalSlot = weapon->GetEquipSlot();
+        weapon->SetEquipSlot(Hooks::g_rightHandSlot);  // Finge que é 1H para desequipar
+    }
+
+    // 2. CHAMAR A FUNÇÃO ORIGINAL DO JOGO
+    std::int64_t result = func(a, a_actor, a_form, extraData);
+
+    // 3. RESTAURAR (DEPOIS de chamar func)
+    if (weapon && originalSlot) {
+        weapon->SetEquipSlot(originalSlot);  // Restaura para 2H
+    }
+
+    return result;
 }

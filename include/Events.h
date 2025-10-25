@@ -10,56 +10,6 @@
 
 struct FileSaveConfig;
 
-// Enum para os tipos de regra
-enum class RuleType { UniqueNPC, Faction, Keyword, Race, GeneralNPC, Player };
-
-// Structs para guardar os dados carregados do jogo (para os pop-ups de seleção)
-struct FactionInfo {
-    RE::FormID formID;
-    std::string editorID;
-    std::string pluginName;
-};
-
-struct KeywordInfo {
-    RE::FormID formID;
-    std::string editorID;
-    std::string pluginName;
-};
-
-struct RaceInfo {
-    RE::FormID formID;
-    std::string editorID;
-    std::string fullName;
-    std::string pluginName;
-};
-
-struct MovesetRule {
-    RuleType type;
-    std::string displayName;  // Nome amigável para a UI (ex: "Ulfric Stormcloak", "BanditFaction")
-    std::string identifier;   // O identificador único (FormID em string ou EditorID)
-    std::string pluginName;   // Relevante para FormIDs
-    RE::FormID formID;
-    // Cada regra tem seu próprio conjunto de categorias de armas.
-    // Reutiliza a mesma estrutura que você já tem para o jogador e NPCs.
-    std::map<std::string, WeaponCategory> categories;
-};
-
-struct NpcRuleMatch {
-    const MovesetRule* rule = nullptr;  // O ponteiro que precisamos!
-    int movesetCount = 0;
-    int priority = 0;
-};
-
-RuleType RuleTypeFromString(const std::string& s);
-std::string RuleTypeToString(RuleType type);
-
-struct PerkInfo {
-    RE::FormID formID;
-    std::string editorID;
-    std::string name;
-    std::string pluginName;
-};
-
 class AnimationManager : public clib_util::singleton::ISingleton<AnimationManager> {
 public:   
     
@@ -72,8 +22,8 @@ public:
     const std::map<std::string, WeaponCategory>& GetCategories() const;
     std::string GetStanceName(const std::string& categoryName, int stanceIndex);
 
-    std::string GetCurrentMovesetName(const std::string& categoryName, int stanceIndex, int movesetIndex,
-                                      int directionalState);
+    std::string GetCurrentMovesetName(RE::Actor* actor, const std::string& categoryName, int stanceIndex,
+                                      int movesetIndex, int directionalState);
     bool _showRestartPopup = false;
     bool gameisloaded = false;
     void ScanDarAnimations();
@@ -95,12 +45,44 @@ public:
     void SaveAllSettings();
     void DeleteManagedUserJsonFiles();
     void PopulatePerkList();
+    
+    bool CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks);
+    std::vector<AvailableItem> GetAvailableStances(RE::Actor* actor, const std::string& categoryName);
+    std::vector<AvailableItem> GetAvailableMovesets(RE::Actor* actor, const std::string& categoryName,
+                                                    int stanceOriginalIndex);
+    void LoadGameDataForEffects();
 
 private:
     std::vector<PerkDef> _perksToDisplayInPopup;
     std::set<RE::FormID> _inheritedPerkFormIDs;
     bool _cacheWasInvalid = false;
     std::vector<PerkInfo> _allPerks;
+    struct MagicEffectInfo {
+        RE::FormID formID;
+        std::string editorID;
+        std::string name;
+        std::string pluginName;
+    };
+    std::vector<MagicEffectInfo> _allMagicEffects;
+
+    struct SpellInfo {
+        RE::FormID formID;
+        std::string editorID;
+        std::string name;
+        std::string pluginName;
+    };
+    std::vector<SpellInfo> _allSpells;
+
+    bool _isEffectSelectorOpen = false;
+    CategoryInstance* _stanceToEditEffect = nullptr;
+    ModInstance* _movesetToEditEffect = nullptr;
+    SubAnimationInstance* _subMovesetToEditEffect = nullptr;
+    char _effectFilter[128] = "";
+    int _effectTypeFilter = 0;  // 0=All, 1=Perk, 2=MagicEffect, 3=Spell
+    std::vector<AppliedEffect> _effectsToDisplayInPopup;
+    std::set<RE::FormID> _inheritedEffectFormIDs;  // Para rastrear efeitos herdados
+    
+    
     std::map<std::string, WeaponCategory> _categories;
     std::map<std::string, WeaponCategory> _npcCategories;
     std::vector<AnimationModDef> _allMods;
@@ -384,6 +366,7 @@ private:
                              rapidjson::Document::AllocatorType& allocator);
 
     void DrawPerkSelectorPopup();
+    void DrawEffectSelectorPopup();
 
 
     // Funções para converter seus dados para JSON (essencial para o cache)

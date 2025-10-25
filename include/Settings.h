@@ -4,6 +4,63 @@
 #include <string>
 #include <vector>
 #include "MCP.h"
+// Enum para os tipos de regra
+enum class RuleType { UniqueNPC, Faction, Keyword, Race, GeneralNPC, Player };
+
+// Structs para guardar os dados carregados do jogo (para os pop-ups de seleção)
+struct FactionInfo {
+    RE::FormID formID;
+    std::string editorID;
+    std::string pluginName;
+};
+
+struct KeywordInfo {
+    RE::FormID formID;
+    std::string editorID;
+    std::string pluginName;
+};
+
+struct RaceInfo {
+    RE::FormID formID;
+    std::string editorID;
+    std::string fullName;
+    std::string pluginName;
+};
+
+
+
+
+
+RuleType RuleTypeFromString(const std::string& s);
+std::string RuleTypeToString(RuleType type);
+
+struct PerkInfo {
+    RE::FormID formID;
+    std::string editorID;
+    std::string name;
+    std::string pluginName;
+};
+
+struct AvailableItem {
+    std::string name;
+    int originalIndex;  // O índice real (1-based) que o OAR espera
+};
+
+struct AppliedEffect {
+    enum class EffectType { Perk, MagicEffect, Spell };
+
+    EffectType type;
+    std::string pluginName;
+    RE::FormID formID;
+    std::string origin = "";  // "Stance", "Moveset", "SubMoveset" (para rastreamento na UI)
+
+    // Necessário para usar std::set ou std::unique mais tarde
+    bool operator<(const AppliedEffect& other) const {
+        if (formID != other.formID) return formID < other.formID;
+        return type < other.type;  // Diferencia Perk 123 de MGEF 123
+    }
+    bool operator==(const AppliedEffect& other) const { return formID == other.formID && type == other.type; }
+};
 
 struct DPATags {
     bool hasA = false;  // Para BFCO_PowerAttackA.hkx
@@ -67,6 +124,7 @@ struct SubAnimationInstance {
     DPATags dpaTags;
     bool hasCPA = false;
     std::vector<PerkDef> perkList;
+    std::vector<AppliedEffect> appliedEffects;
 };
 
 struct ModInstance {
@@ -79,11 +137,13 @@ struct ModInstance {
     int mn = 100;
     int order = 0;
     std::vector<PerkDef> perkList;
+    std::vector<AppliedEffect> appliedEffects;
 };
 
 struct CategoryInstance {
     std::vector<ModInstance> modInstances;
     std::vector<PerkDef> perkList;
+    std::vector<AppliedEffect> appliedEffects;
 };
 
 struct WeaponCategory {
@@ -112,6 +172,21 @@ struct UserMoveset {
     std::vector<SubAnimationInstance> subAnimations;
 };
 
+struct MovesetRule {
+    RuleType type;
+    std::string displayName;  // Nome amigável para a UI (ex: "Ulfric Stormcloak", "BanditFaction")
+    std::string identifier;   // O identificador único (FormID em string ou EditorID)
+    std::string pluginName;   // Relevante para FormIDs
+    RE::FormID formID;
+    // Cada regra tem seu próprio conjunto de categorias de armas.
+    // Reutiliza a mesma estrutura que você já tem para o jogador e NPCs.
+    std::map<std::string, WeaponCategory> categories;
+};
+struct NpcRuleMatch {
+    const MovesetRule* rule = nullptr;  // O ponteiro que precisamos!
+    int movesetCount = 0;
+    int priority = 0;
+};
 void WheelerKeys();
 inline int WheelerKeyboard = 0;
 inline int WheelerGamepad = 0;

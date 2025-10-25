@@ -5,6 +5,7 @@
 #include "SKSE/SKSE.h"
 #include "SkyPrompt/API.hpp"
 #include "Hooks.h"
+#include "Settings.h"
 #include <chrono>
 #include <shared_mutex> // Para acesso seguro ao set
 
@@ -34,6 +35,10 @@ namespace GlobalControl {
     inline int g_currentStance = 0;
     inline int g_currentMoveset = 0;
     extern int g_directionalState; 
+    inline std::vector<AppliedEffect> g_lastAppliedStanceEffects;
+    inline std::vector<AppliedEffect> g_lastAppliedMovesetEffects;
+    void ApplyAndTrackEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst,
+                              std::vector<AppliedEffect>& lastAppliedEffects);
     // ID do nosso plugin com a API SkyPrompt
     inline SkyPromptAPI::ClientID g_clientID = 0;
     inline SkyPromptAPI::ClientID MenuShowing = 0;
@@ -92,6 +97,7 @@ namespace GlobalControl {
     inline SkyPromptAPI::Prompt Left_Hand("Left hand", 0, 0, SkyPromptAPI::PromptType::kSinglePress, 0, Stances_menu);
 
     inline SkyPromptAPI::Prompt Right_Hand("Right Hand", 1, 0, SkyPromptAPI::PromptType::kSinglePress, 0, Moveset_menu);
+    inline SkyPromptAPI::Prompt Both_Hands("Both Hands", 2, 0, SkyPromptAPI::PromptType::kSinglePress, 0, Moveset_menu);
 
     
     // A definimos como 'inline' aqui mesmo para simplificar e evitar problemas de linker.
@@ -133,7 +139,8 @@ namespace GlobalControl {
         std::span<const SkyPromptAPI::Prompt> GetPrompts() const override; 
         mutable SkyPromptAPI::Prompt Left_Hand{"Left hand", 0, 0, SkyPromptAPI::PromptType::kSinglePress};
         mutable SkyPromptAPI::Prompt Right_Hand{"Right Hand", 1, 0, SkyPromptAPI::PromptType::kSinglePress};
-        mutable std::array<SkyPromptAPI::Prompt, 2> prompts = {Left_Hand, Right_Hand};
+        mutable SkyPromptAPI::Prompt Both_Hands{"Both Hands", 2, 0, SkyPromptAPI::PromptType::kSinglePress};
+        mutable std::array<SkyPromptAPI::Prompt, 3> prompts = {Left_Hand, Right_Hand, Both_Hands};
         // Função chamada quando um evento (ex: pressionar tecla) ocorre
         void ProcessEvent(SkyPromptAPI::PromptEvent event) const override;
         mutable bool except = false;
@@ -337,7 +344,7 @@ namespace GlobalControl {
     inline bool IsAnyMenuOpen();
     inline bool IsThirdPerson();
 
-    void OnUpdate();
+    
 
     void NPCrandomNumber(RE::Actor* targetActor, const std::string& eventSource);
 
@@ -346,6 +353,17 @@ namespace GlobalControl {
     void UpdatePowerAttackGlobals();
     bool ShouldShowPrompts();
     void UpdatePromptVisibility();
+    void Intall();
+    struct Equip2H {
+        static void thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData, int count,
+                          std::int64_t* equipSlot, char queueEquip, char forceEquip, char playSounds, char applyNow);
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+    struct Unequip2H {
+        static std::int64_t thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData);
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
     class InputListener : public RE::BSTEventSink<RE::InputEvent*> {
     public:
     // Singleton para garantir que exista apenas uma instância
@@ -379,4 +397,15 @@ private:
     bool c_right = false;
 };
 
+}
+
+namespace stl {
+    using namespace SKSE::stl;
+
+    template <class T>
+    void write_thunk_call(std::uintptr_t a_src) {
+        auto& trampoline = SKSE::GetTrampoline();
+        SKSE::AllocTrampoline(14);
+        T::func = trampoline.write_call<5>(a_src, T::thunk);
+    }
 }

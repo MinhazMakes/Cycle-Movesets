@@ -4,6 +4,9 @@
 #include "Manager.h"
 #include "Serialization.h"
 #include "OARAPI.h"
+#include "MCP.h"
+#include "Hooks.h"
+
 
 namespace fs = std::filesystem;
 
@@ -101,11 +104,13 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         AnimationManager::GetSingleton()->PopulateNpcList();
         AnimationManager::GetSingleton()->LoadGameDataForNpcRules();
         AnimationManager::GetSingleton()->PopulatePerkList();
+        AnimationManager::GetSingleton()->LoadGameDataForEffects();
 
         auto dataHandler = RE::TESDataHandler::GetSingleton();
         Hooks::g_rightHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f42, "Skyrim.esm");
         Hooks::g_leftHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f43, "Skyrim.esm");
         Hooks::g_twoHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f45, "Skyrim.esm");
+        Hooks::g_cmfhandle = dataHandler->LookupForm<RE::BGSEquipSlot>(0x802, "CMF.esp");
         
         Hooks::g_weapTypeSword = dataHandler->LookupForm<RE::BGSKeyword>(0x1E711, "Skyrim.esm");
         Hooks::g_weapTypeGreatsword = dataHandler->LookupForm<RE::BGSKeyword>(0x6D931, "Skyrim.esm");
@@ -147,6 +152,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         }
 
         GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants();
+
     }
 
 }
@@ -158,6 +164,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
     Hooks::Install();
     //AnimationManager::GetSingleton()->SaveAllSettings();
     SKSE::Init(skse);
+    //GlobalControl::Intall();
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
     
     // Registra seu ouvinte de eventos de Ação (sacar/guardar arma)
