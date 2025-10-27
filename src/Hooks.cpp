@@ -320,6 +320,9 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             {"Warhammer & Shield", 10.0, 11.0, false, true, {}, {}},
             // Dual-Wield
             {"Dual Sword", 1.0, 1.0, true, {}, {}},
+            {"Dual Greatsword", 11.0, 11.0, true, {}, {}},
+            {"Dual Battleaxe", 6.0, 6.0, true, {}, {}},
+            {"Dual Warhammer", 10.0, 10.0, true, {}, {}},
             {"Dual Dagger", 2.0, 2.0, true, {}, {}},
             {"Dual War Axe", 3.0, 3.0, true, {}, {}},
             {"Dual Mace", 4.0, 4.0, true, {}, {}},
@@ -416,13 +419,13 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         if (!dataHandler) return;
 
         // Carregar Magic Effects (EffectSetting)
-        for (const auto& mgef : dataHandler->GetFormArray<RE::EffectSetting>()) {
+        /*for (const auto& mgef : dataHandler->GetFormArray<RE::EffectSetting>()) {
             if (mgef && mgef->GetFullName() && strlen(mgef->GetFullName()) > 0 && mgef->GetFile(0)) {
                 _allMagicEffects.push_back({mgef->GetFormID(), clib_util::editorID::get_editorID(mgef),
                                             mgef->GetFullName(), std::string(mgef->GetFile(0)->GetFilename())});
             }
         }
-        SKSE::log::info("Carregados {} Magic Effects.", _allMagicEffects.size());
+        SKSE::log::info("Carregados {} Magic Effects.", _allMagicEffects.size());*/
 
         // Carregar Spells (SpellItem)
         for (const auto& spell : dataHandler->GetFormArray<RE::SpellItem>()) {
@@ -6567,7 +6570,7 @@ void AnimationManager::DrawEffectSelectorPopup() {
         // Filtros
         ImGui::InputText("Filter Name/EditorID", _effectFilter, sizeof(_effectFilter));
         ImGui::SameLine();
-        const char* types[] = {"All Types", "Perks", "Magic Effects", "Spells"};
+        const char* types[] = {"All Types", "Perks", "Spells"};
         ImGui::PushItemWidth(150);
         ImGui::Combo("Filter Type", &_effectTypeFilter, types, sizeof(types) / sizeof(types[0]));
         ImGui::PopItemWidth();
@@ -6630,9 +6633,9 @@ void AnimationManager::DrawEffectSelectorPopup() {
             // Desenha as seções baseadas no filtro de tipo
             if (_effectTypeFilter == 0 || _effectTypeFilter == 1)
                 draw_list(_allPerks, AppliedEffect::EffectType::Perk, "Perk");
+            /*if (_effectTypeFilter == 0 || _effectTypeFilter == 2)
+                draw_list(_allMagicEffects, AppliedEffect::EffectType::MagicEffect, "MGEF");*/
             if (_effectTypeFilter == 0 || _effectTypeFilter == 2)
-                draw_list(_allMagicEffects, AppliedEffect::EffectType::MagicEffect, "MGEF");
-            if (_effectTypeFilter == 0 || _effectTypeFilter == 3)
                 draw_list(_allSpells, AppliedEffect::EffectType::Spell, "Spell");
         }
         ImGui::EndChild();

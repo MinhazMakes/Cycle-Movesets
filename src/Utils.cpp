@@ -790,6 +790,7 @@ RE::BSEventNotifyControl GlobalControl::CameraChange::ProcessEvent(const SKSE::C
         SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
         SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
         //logger::info("me retorna aqui vei");
+
     }
     if (ShouldShowPrompts() && !Cycleopen) {
         Cycleopen = true;
@@ -873,22 +874,61 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
                     }
                 }
                 break;
-            case AppliedEffect::EffectType::MagicEffect:
-                // A remoção de MGEF direto é complexa. A forma mais comum é remover
-                // o SPELL que o aplicou. Se o MGEF foi aplicado por um spell
-                // adicionado por esta função, a lógica abaixo funciona.
-            case AppliedEffect::EffectType::Spell:
-                if (auto spell = form->As<RE::SpellItem>()) {
-                    if (actor->HasSpell(spell)) {  // Verifica antes de remover
-                        SKSE::log::info("Removendo Spell/Effect Source: {}", spell->GetName());
-                        actor->RemoveSpell(spell);
-                        // IMPORTANTE: Isso remove o spell da lista, mas não necessariamente
-                        // remove MGEFs ativos instantaneamente se eles tiverem duração.
-                        // Pode ser necessário usar Dispel ou funções SKSE mais avançadas se
-                        // a remoção imediata de MGEFs for crucial.
-                    }
+            case AppliedEffect::EffectType::Spell: {
+                RE::SpellItem* spellToRemove = form->As<RE::SpellItem>();
+                RE::EffectSetting* mgefToRemove = form->As<RE::EffectSetting>();
+
+                // Tenta Dispel
+                // GetActiveEffectList retorna BSSimpleList<ActiveEffect*>*
+                if (auto activeEffectList = actor->AsMagicTarget()->GetActiveEffectList()) {
+                    SKSE::log::debug("Iterando lista de efeitos ativos para Dispel (Forward)...");
+
+                    // Usa um iterador C++ padrão para BSSimpleList
+                    auto it = activeEffectList->begin();
+                    while (it != activeEffectList->end()) {
+                        RE::ActiveEffect* activeEffect = *it;
+                        // Avança o iterador ANTES de potencialmente chamar Dispel
+                        auto nextIt = std::next(it);
+
+                        if (activeEffect) {  // Verifica se o ponteiro é válido
+                            bool shouldDispel = false;
+                            RE::MagicItem* sourceMagicItem = activeEffect->spell;
+
+                            // Verifica se o efeito ativo veio do SPELL que estamos removendo
+                            if (spellToRemove && sourceMagicItem == spellToRemove) {
+                                shouldDispel = true;
+                                SKSE::log::info("Dispelando efeito de {}: {}", spellToRemove->GetName(),
+                                                activeEffect->GetBaseObject() ? activeEffect->GetBaseObject()->GetName()
+                                                                              : "Nome Inválido");
+                            }
+                            // Verifica se o efeito ativo é o MGEF direto que estamos removendo
+                            else if (mgefToRemove && activeEffect->GetBaseObject() == mgefToRemove) {
+                                shouldDispel = true;
+                                SKSE::log::info("Dispelando efeito direto de MGEF: {}", mgefToRemove->GetName());
+                            }
+
+                            if (shouldDispel) {
+                                activeEffect->Dispel(true);  // true = force dispel immediately
+                                // Dispel pode ou não remover o item da lista imediatamente.
+                                // Avançar o iterador *antes* garante que não tenhamos problemas
+                                // mesmo se o item for removido.
+                            }
+                        }
+                        // Continua a iteração com o próximo iterador salvo
+                        it = nextIt;
+                    }  // Fim do while
+                } else {
+                    SKSE::log::warn("Não foi possível obter ActiveEffectList para Dispel.");
                 }
-                break;
+
+                // Após tentar Dispel, remove o Spell da lista do ator (se aplicável)
+                if (spellToRemove && actor->HasSpell(spellToRemove)) {
+                    SKSE::log::info("Removendo Spell/Ability da lista do ator: {} ({:08X})", spellToRemove->GetName(),
+                                    spellToRemove->GetFormID());
+                    actor->RemoveSpell(spellToRemove);
+                }
+            }  // Fim do escopo
+            break;
         }
     }
 
@@ -913,107 +953,50 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
                     }
                 }
                 break;
-            case AppliedEffect::EffectType::MagicEffect:
-                if (auto mgef = form->As<RE::EffectSetting>()) {
-                    // Aplicar MGEF diretamente é difícil. A abordagem padrão é
-                    // criar/encontrar um Spell que contenha APENAS este MGEF
-                    // e adicioná-lo ao jogador.
-                    SKSE::log::warn("Aplicação direta de Magic Effect ({}) não é ideal. Considere usar um Spell.",
-                                    mgef->GetName());
-                    // Exemplo (requer helper GetOrCreateSpellForMGEF):
-                    // RE::SpellItem* dummySpell = GetOrCreateSpellForMGEF(mgef);
-                    // if (dummySpell && !actor->HasSpell(dummySpell)) {
-                    //     actor->AddSpell(dummySpell);
-                    // }
-                }
-                break;
             case AppliedEffect::EffectType::Spell:
-                //if (auto spell = form->As<RE::SpellItem>()) {
-                //    // Adiciona Habilidades/Poderes Menores passivamente
-                //    if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
-                //        spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
-                //        if (!actor->HasSpell(spell)) {
-                //            SKSE::log::info("Adicionando Habilidade/Poder Menor: {} ({:08X})", spell->GetName(),
-                //                            spell->GetFormID());
-                //            actor->AddSpell(spell);
-                //        }
-                //    } else {  // Casta outros tipos de Spells
-                //        SKSE::log::info("Tentando castar Spell: {} ({:08X})", spell->GetName(), spell->GetFormID());
-
-                //        // --- CORREÇÃO: Usar função membro do Actor ou utility function ---
-                //        // Verifica se o ator pode castar usando o MagicCaster apropriado
-                //        auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
-                //        RE::MagicSystem::CannotCastReason reason;
-                //        if (caster && actor->CheckCast(spell, false, &reason)) {  // Usa CheckCast do Actor
-                //            // Se puder castar, inicia o cast usando uma função apropriada.
-                //            // Muitas vezes, para casts instantâneos "fire and forget",
-                //            // AddSpell pode ser suficiente se o spell tiver as flags corretas,
-                //            // ou usamos funções de nível superior se disponíveis.
-                //            // Uma alternativa comum é usar Papyrus ou SKSE para iniciar o cast.
-
-                //            // Tentativa 1: Usar AddSpell pode funcionar para alguns spells "fire and forget"
-                //            // actor->AddSpell(spell); // Isso pode não *castar* imediatamente.
-
-                //            // Tentativa 2: A forma mais robusta costuma ser via SKSE ou Papyrus Utils se disponíveis.
-                //            // Exemplo com SKSE (se você tiver SKSE/Papyrus integrado):
-                //            // auto papyrusVm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-                //            // RE::BSTSmartPointer<RE::BSScript::IObjectHandlePolicy> policy; // Obtenha a policy
-                //            // RE::VMHandle handle = policy->GetHandleForObject(actor->GetFormType(), actor);
-                //            // if(papyrusVm && handle != policy->EmptyHandle()) {
-                //            //    auto args = RE::MakeFunctionArguments(spell);
-                //            //    papyrusVm->DispatchStaticCall("Actor", "Cast", args); // Chamando Actor.Cast() do
-                //            //    Papyrus SKSE::log::info("Cast iniciado via Papyrus Actor.Cast");
-                //            // } else {
-                //            //    SKSE::log::error("Falha ao obter VM ou Handle para castar {}", spell->GetName());
-                //            // }
-
-                //            // *** Solução de Fallback Comum (usando funções do jogo via RE/REL) ***
-                //            // Se as opções acima não funcionarem, esta é uma forma mais direta,
-                //            // embora dependa de encontrar o offset correto para a função de cast.
-                //            // Esta função específica pode variar, mas uma candidata comum é:
-                //            using CastFunction = void (*)(RE::MagicCaster*, RE::MagicItem*, bool, float, bool, float,
-                //                                          RE::TESObjectREFR*);
-                //            // Obtenha o endereço da função (pode precisar de REL::ID ou Offset Scanner)
-                //            // REL::Relocation<CastFunction> func{ REL::ID(xxxxx) }; // Substitua xxxxx pelo ID correto
-                //            // if (func) {
-                //            //    func(caster, spell, false, 1.0f, false, 0.0f, actor); // Chama a função do jogo
-                //            //    SKSE::log::info("Cast iniciado via função nativa.");
-                //            // } else {
-                //            //    SKSE::log::error("Função nativa de Cast não encontrada.");
-                //            // }
-
-                //            // *** A Opção Mais Simples (mas pode não ser ideal para todos os spells): Adicionar e
-                //            // Remover *** Isso garante que os MGEFs sejam aplicados, mas não é um "cast" real.
-                //            if (!actor->HasSpell(spell)) {  // Evita adicionar múltiplas vezes
-                //                SKSE::log::info("Adicionando Spell (como habilidade temporária): {}", spell->GetName());
-                //                actor->AddSpell(spell);
-                //                // Idealmente, você precisaria de um mecanismo para remover este spell depois,
-                //                // talvez ao trocar de stance/moveset novamente, usando a lógica de `toRemove`.
-                //            }
-
-                //        } else {
-                //            SKSE::log::warn("Não foi possível castar {}. Razão: {}", spell->GetName(),
-                //                            static_cast<int>(reason));
-                //        }
-                //    }
-                //}
                 if (auto spell = form->As<RE::SpellItem>()) {
-                    // --- CORREÇÃO: Simplificado para sempre usar AddSpell ---
-                    // Verifica se o ator já não tem o spell antes de adicionar
-                    if (!actor->HasSpell(spell)) {
-                        // Adiciona QUALQUER tipo de spell configurado passivamente
-                        SKSE::log::info("Adicionando Spell (passivo): {} ({:08X})", spell->GetName(),
+                    // Adiciona Habilidades/Poderes Menores passivamente
+                    if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
+                        spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
+                        if (!actor->HasSpell(spell)) {
+                            SKSE::log::info("Adicionando Habilidade/Poder Menor: {} ({:08X})", spell->GetName(),
+                                            spell->GetFormID());
+                            actor->AddSpell(spell);
+                        } else {
+                            SKSE::log::debug("Habilidade/Poder Menor {} ({:08X}) já presente.", spell->GetName(),
+                                             spell->GetFormID());
+                        }
+                    } else {  // Casta outros tipos de Spells IMEDIATAMENTE
+                        SKSE::log::info("Tentando castar Spell imediatamente: {} ({:08X})", spell->GetName(),
                                         spell->GetFormID());
-                        actor->AddSpell(spell);
-                        // A lógica em 'toRemove' cuidará da remoção posterior.
-                    } else {
-                        SKSE::log::debug("Spell {} ({:08X}) já presente no ator.", spell->GetName(),
-                                         spell->GetFormID());
+
+                        // --- CORREÇÃO: Usar CastSpellImmediate ---
+                        // Obtem o caster apropriado (kInstant geralmente funciona bem para isso)
+                        if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                            // Verifica se o ator pode castar (ainda é uma boa prática)
+                            RE::MagicSystem::CannotCastReason reason =
+                                RE::MagicSystem::CannotCastReason::kOK;  // Inicializa com OK
+                            // Nota: CheckCast pode não ser perfeito para CastSpellImmediate,
+                            // mas é uma verificação básica de magicka/silence.
+                            if (actor->CheckCast(spell, false, &reason)) {
+
+                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                                SKSE::log::info("CastSpellImmediate chamado para {}", spell->GetName());
+
+                            } else {
+                                SKSE::log::warn(
+                                    "Não foi possível castar {} via CastSpellImmediate. Razão CheckCast: {}",
+                                    spell->GetName(), static_cast<int>(reason));
+                            }
+                        } else {
+                            SKSE::log::error("Não foi possível obter MagicCaster para CastSpellImmediate de {}",
+                                             spell->GetName());
+                        }
+                        // --- FIM DA CORREÇÃO ---
                     }
-                    // --- FIM DA CORREÇÃO ---
                 } else {
-                    SKSE::log::warn("FormID {:08X} (Plugin: {}) não é um SpellItem válido para adição.", effect.formID,
-                                    effect.pluginName);
+                    SKSE::log::warn("FormID {:08X} (Plugin: {}) não é um SpellItem válido para adição/cast.",
+                                    effect.formID, effect.pluginName);
                 }
                 break;
         }
@@ -1810,6 +1793,33 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
         if (weapon && originalSlot) {
             // Restaura o slot original para o estado normal (2H)
             weapon->SetEquipSlot(originalSlot);
+        }
+        if (a_actor) {
+            logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
+
+            // Função helper para checar e logar um slot
+            auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
+                if (!slot) {
+                    logger::warn("Tentando logar um slot nulo: {}", slotName);
+                    return;
+                }
+
+                RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
+                if (equippedItem) {
+                    // Se o item existir, loga o nome dele
+                    logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
+                } else {
+                    // Se estiver vazio, loga "Vazio"
+                    logger::info("Slot [{}]: Vazio", slotName);
+                }
+            };
+
+            // Logar os três slots que você pediu
+            logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
+            logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
+            logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
+
+            logger::info("-------------------------------------------------");
         }
         return;
     }

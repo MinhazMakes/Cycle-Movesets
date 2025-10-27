@@ -13,8 +13,7 @@ namespace fs = std::filesystem;
 // 2. Declare um ponteiro global para a interface da API.
 OAR_API::Animations::IAnimationsInterface* g_oarAPI = nullptr;
 
-// Função para solicitar e obter a interface da API do OAR
-// (Esta função é uma cópia da que existe no próprio OAR, para conveniência)
+
 void RequestOAR_API() {
     // O nome do plugin deve ser exato e case-sensitive.
     const auto pluginHandle = GetModuleHandleA("OpenAnimationReplacer.dll");
