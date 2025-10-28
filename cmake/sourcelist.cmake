@@ -7,4 +7,7 @@ set(sources ${sources}
 	src/Hooks.cpp
 	src/MCP.cpp
  	src/Serialization.cpp
+	src/Conditions.cpp
+	include/OAR/OpenAnimationReplacerAPI-Conditions.cpp
+	include/OAR/OpenAnimationReplacer-ConditionTypes.cpp
 )

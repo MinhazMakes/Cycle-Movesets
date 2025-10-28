@@ -5,8 +5,6 @@
 #include <string>
 #include "SKSEMCP/SKSEMenuFramework.hpp"
 
-
-
 namespace Settings {
     // Variável para armazenar nossa hotkey.
     // Ação "Stance Menu"
@@ -257,3 +255,4 @@ namespace Hooks {
         static inline REL::Relocation<decltype(thunk)> originalFunction;
     };
 }
+

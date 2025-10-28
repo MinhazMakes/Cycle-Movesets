@@ -28,9 +28,6 @@ struct RaceInfo {
 };
 
 
-
-
-
 RuleType RuleTypeFromString(const std::string& s);
 std::string RuleTypeToString(RuleType type);
 

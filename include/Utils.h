@@ -39,6 +39,7 @@ namespace GlobalControl {
     inline std::vector<AppliedEffect> g_lastAppliedMovesetEffects;
     void ApplyAndTrackEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst,
                               std::vector<AppliedEffect>& lastAppliedEffects);
+    void UpdateEffectsForDirectionalChange(int oldState, int newState);
     // ID do nosso plugin com a API SkyPrompt
     inline SkyPromptAPI::ClientID g_clientID = 0;
     inline SkyPromptAPI::ClientID MenuShowing = 0;
@@ -353,7 +354,6 @@ namespace GlobalControl {
     void UpdatePowerAttackGlobals();
     bool ShouldShowPrompts();
     void UpdatePromptVisibility();
-    void Intall();
     struct Equip2H {
         static void thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData, int count,
                           std::int64_t* equipSlot, char queueEquip, char forceEquip, char playSounds, char applyNow);

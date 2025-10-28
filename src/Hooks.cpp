@@ -320,7 +320,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             {"Warhammer & Shield", 10.0, 11.0, false, true, {}, {}},
             // Dual-Wield
             {"Dual Sword", 1.0, 1.0, true, {}, {}},
-            {"Dual Greatsword", 11.0, 11.0, true, {}, {}},
+            {"Dual Greatsword", 5.0, 5.0, true, {}, {}},
             {"Dual Battleaxe", 6.0, 6.0, true, {}, {}},
             {"Dual Warhammer", 10.0, 10.0, true, {}, {}},
             {"Dual Dagger", 2.0, 2.0, true, {}, {}},
@@ -2574,6 +2574,18 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
 
                 // Right-Hand Equipped Type condition
                 AddFullCategoryConditions(andConditions, *config.category, allocator);
+                if (config.category->isDualWield) {
+                    // Dual Wield e Escudo exigem que AMBOS os slots de 1H estejam ocupados
+                    AddIsEquipSlotOccupiedCondition(andConditions, "RightHand", false, allocator);
+                    AddIsEquipSlotOccupiedCondition(andConditions, "LeftHand", false, allocator);
+                } else if (config.category->leftHandEquippedTypeValue == -1.0) {
+                    // Categoria de Duas Mãos Padrão (ex: Greatsword)
+                    AddIsEquipSlotOccupiedCondition(andConditions, "TwoHand", false, allocator);
+                } else if (config.category->leftHandEquippedTypeValue == 0.0) {
+                    // Categoria de Uma Mão Pura (mão esquerda vazia)
+                    AddIsEquipSlotOccupiedCondition(andConditions, "RightHand", false, allocator);
+                    AddIsEquipSlotOccupiedCondition(andConditions, "LeftHand", true, allocator);
+                }
 
                 // ADIÇÃO: Correção de segurança para a instância do jogador
                 int final_instance_index = config.instance_index;
@@ -6422,6 +6434,23 @@ void AnimationManager::LoadGameDataForNpcRules() {
         conditionsArray.PushBack(condition, allocator);
     }
 
+    void AnimationManager::AddIsEquipSlotOccupiedCondition(rapidjson::Value& conditionsArray,
+                                                           const std::string& slotName, bool negated,
+                                                           rapidjson::Document::AllocatorType& allocator) {
+        rapidjson::Value condition(rapidjson::kObjectType);
+        condition.AddMember("condition", "IsEquipSlotOccupied", allocator);
+        // Usando o nome do plugin do seu exemplo
+        condition.AddMember("requiredPlugin", "CycleMovesets", allocator);
+        condition.AddMember("requiredVersion", "1.0.0.0", allocator);
+
+        if (negated) {
+            condition.AddMember("negated", true, allocator);
+        }
+
+        condition.AddMember("Slot Name", rapidjson::Value(slotName.c_str(), allocator), allocator);
+        conditionsArray.PushBack(condition, allocator);
+    }
+
 void AnimationManager::DrawPerkSelectorPopup() {
         if (_isPerkSelectorOpen) {
             ImGui::OpenPopup("Select Perk");
@@ -6759,7 +6788,5 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
 
         return originalFunction(a1);
     }
-
-
 
 

@@ -364,6 +364,8 @@ private:
 
     void AddHasPerkCondition(rapidjson::Value& conditionsArray, const std::string& plugin, RE::FormID formID,
                              rapidjson::Document::AllocatorType& allocator);
+    void AddIsEquipSlotOccupiedCondition(rapidjson::Value& conditionsArray, const std::string& slotName, bool negated,
+                                         rapidjson::Document::AllocatorType& allocator);
 
     void DrawPerkSelectorPopup();
     void DrawEffectSelectorPopup();

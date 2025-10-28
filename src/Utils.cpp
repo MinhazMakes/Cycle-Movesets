@@ -209,10 +209,15 @@ RE::BSEventNotifyControl GlobalControl::InputListener::ProcessEvent(RE::InputEve
                 }
             }
         }
-
+        int previousDirectionalState = directionalState;
         // Apenas recalcule a direção se uma das nossas teclas de movimento REALMENTE mudou de estado.
         if (umaTeclaDeMovimentoMudou) {
             UpdateDirectionalState();
+        }
+
+        if (directionalState != previousDirectionalState && g_isWeaponDrawn) {
+            // Chama a nova função para atualizar os efeitos
+            UpdateEffectsForDirectionalChange(previousDirectionalState, directionalState);
         }
         
         return RE::BSEventNotifyControl::kContinue;
@@ -294,23 +299,41 @@ void GlobalControl::InputListener::UpdateDirectionalState() {
 std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     if (!targetActor) return "Unarmed";
 
-    // 1. Obter os objetos equipados em ambas as mãos
-    auto rightHand = targetActor->GetEquippedObject(false);
-    auto leftHand = targetActor->GetEquippedObject(true);
+    // 1. Obter os objetos DIRETAMENTE DOS SLOTS (como sugerido)
+    auto itemR = targetActor->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
+    auto itemL = targetActor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
+    auto item2H = targetActor->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
 
-    RE::TESObjectWEAP* rightWeapon = rightHand ? rightHand->As<RE::TESObjectWEAP>() : nullptr;
-    RE::TESObjectWEAP* leftWeapon = leftHand ? leftHand->As<RE::TESObjectWEAP>() : nullptr;
-    RE::TESObjectARMO* leftArmor = leftHand ? leftHand->As<RE::TESObjectARMO>() : nullptr;
+    RE::TESObjectWEAP* rightWeapon = nullptr;
+    RE::TESObjectWEAP* leftWeapon = nullptr;
+    RE::TESObjectARMO* leftArmor = nullptr;  // Para escudos
 
-    // 2. Lógica inicial de checagem de estado
-    // É "Unarmed" apenas se AMBAS as mãos estiverem efetivamente vazias (ou com itens não relevantes)
+    // 2. Lógica de prioridade para determinar o que está equipado
+    if (item2H && item2H->IsWeapon()) {
+        // Caso 1: Arma de Duas Mãos Padrão (ocupa o slot 2H)
+        rightWeapon = item2H->As<RE::TESObjectWEAP>();
+        leftWeapon = nullptr;  // Slot 2H ocupa ambas as mãos
+    } else {
+        // Caso 2: Dual Wield (1H ou 2H), 1H + Escudo, ou 1H + Vazio
+        if (itemR && itemR->IsWeapon()) {
+            rightWeapon = itemR->As<RE::TESObjectWEAP>();
+        }
+        if (itemL) {  // Slot da mão esquerda está ocupado
+            if (itemL->IsWeapon()) {
+                leftWeapon = itemL->As<RE::TESObjectWEAP>();
+            } else if (itemL->IsArmor()) {
+                leftArmor = itemL->As<RE::TESObjectARMO>();
+            }
+        }
+    }
+
+    // 3. Lógica de checagem de estado (igual à original)
     if (!rightWeapon && !leftWeapon && (!leftArmor || !leftArmor->IsShield())) {
         return "Unarmed";
     }
 
-    // 3. Determinar os tipos para ambas as mãos (padrão 0.0 para "vazio")
+    // 4. Determinar os tipos (igual à original)
     double rightHandType = rightWeapon ? static_cast<double>(rightWeapon->GetWeaponType()) : 0.0;
-
 
     double leftHandType = 0.0;
     if (leftWeapon) {
@@ -446,19 +469,141 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                 logger::error("Skyprompt didnt worked Moveset Sink");
             }
             break;        
-        case SkyPromptAPI::kDeclined:
-            g_currentMoveset = 0;
-            g_currentStance = 0;
+        case SkyPromptAPI::kDeclined: {  // Adiciona escopo
+            SKSE::log::info("[StanceSink Decline] Pressionado. Verificando Settings::CycleMoveset (g_StyleFirst)...");
+
+            // Assume-se que Settings::CycleMoveset é a variável para g_StyleFirst
+            if (!Settings::CycleMoveset) {
+                // g_StyleFirst é FALSE: Reseta tudo para 0 e limpa efeitos
+                SKSE::log::info("[StanceSink Decline] Resetando stance e moveset para 0.");
+                g_currentStance = 0;
+                g_currentMoveset = 0;
+
+                // Aplica 0 nas variáveis do jogo
+                RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance", 0);
+                RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", 0);
+
+                // Limpa TODOS os efeitos
+                SKSE::log::info("[StanceSink Decline] Limpando todos os efeitos de Stance e Moveset.");
+                ApplyAndTrackEffects(player, {}, g_lastAppliedStanceEffects);
+                ApplyAndTrackEffects(player, {}, g_lastAppliedMovesetEffects);
+
+            } else {
+                // g_StyleFirst é TRUE: Vai para a primeira stance/moveset disponível
+                SKSE::log::info("[StanceSink Decline] Indo para a primeira Stance/Moveset disponível.");
+                const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+                const int numStances = availableStances.size();
+
+                if (numStances > 0) {
+                    g_currentStance = 1;  // Seleciona a primeira stance da lista
+                    int originalStanceIndexToApply = availableStances[0].originalIndex;
+
+                    // 1. Aplica a primeira stance no jogo
+                    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance",
+                                                                             originalStanceIndexToApply);
+                    SKSE::log::info("[StanceSink Decline] Setando Stance (Original Index): {}",
+                                    originalStanceIndexToApply);
+
+                    // 2. Reseta o moveset e aplica o primeiro disponível da PRIMEIRA stance
+                    g_currentMoveset = 0;
+                    int originalMovesetIndexToApply = 0;
+                    const ModInstance* firstModInst = nullptr;
+                    const SubAnimationInstance* firstSubInst = nullptr;
+                    std::vector<AppliedEffect> firstMovesetCombinedEffects;
+
+                    const auto availableMovesets =
+                        animManager->GetAvailableMovesets(player, categoryName, originalStanceIndexToApply);
+                    if (!availableMovesets.empty()) {
+                        g_currentMoveset = 1;
+                        originalMovesetIndexToApply = availableMovesets[0].originalIndex;
+
+                        // Coleta efeitos do primeiro moveset (mesma lógica de StancesChangesSink)
+                        auto cat_it = animManager->GetCategories().find(categoryName);
+                        if (cat_it != animManager->GetCategories().end()) {
+                            const WeaponCategory& category = cat_it->second;
+                            if (originalStanceIndexToApply > 0 &&
+                                originalStanceIndexToApply <= category.instances.size()) {
+                                const auto& stanceInstance = category.instances[originalStanceIndexToApply - 1];
+                                firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                                   stanceInstance.appliedEffects.begin(),
+                                                                   stanceInstance.appliedEffects.end());
+                                
+                                int parentCounter = 0;
+                                auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);
+                                for (const auto& modInst : mutableStanceInstance.modInstances) { 
+                                    if (!modInst.isSelected) continue;
+                                    for (const auto& subInst : modInst.subAnimationInstances) {
+                                        bool isParent =
+                                            !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                              subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                              subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+                                        if (!subInst.isSelected || !isParent) continue;
+                                        parentCounter++;
+                                        if (parentCounter == originalMovesetIndexToApply) {
+                                            firstModInst = &modInst;
+                                            firstSubInst = &subInst;
+                                            goto found_first_moveset_decline_stance_sink;
+                                        }
+                                    }
+                                }
+                            found_first_moveset_decline_stance_sink:;
+                                if (firstModInst)
+                                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                                       firstModInst->appliedEffects.begin(),
+                                                                       firstModInst->appliedEffects.end());
+                                if (firstSubInst)
+                                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                                       firstSubInst->appliedEffects.begin(),
+                                                                       firstSubInst->appliedEffects.end());
+                                std::sort(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end());
+                                firstMovesetCombinedEffects.erase(
+                                    std::unique(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end()),
+                                    firstMovesetCombinedEffects.end());
+                            }
+                        }
+                    }  // Fim if (!availableMovesets.empty())
+
+                    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndexToApply);
+                    SKSE::log::info("[StanceSink Decline] Setando Moveset (Original Index): {}",
+                                    originalMovesetIndexToApply);
+
+                    // 3. Coleta efeitos da PRIMEIRA stance
+                    std::vector<AppliedEffect> firstStanceEffects;
+                    auto cat_it = animManager->GetCategories().find(categoryName);
+                    if (cat_it != animManager->GetCategories().end()) {
+                        const WeaponCategory& category = cat_it->second;
+                        if (originalStanceIndexToApply > 0 && originalStanceIndexToApply <= category.instances.size()) {
+                            firstStanceEffects = category.instances[originalStanceIndexToApply - 1].appliedEffects;
+                        }
+                    }
+
+                    // 4. Aplica/Remove efeitos para refletir o estado da PRIMEIRA stance e PRIMEIRO moveset
+                    SKSE::log::info("[StanceSink Decline] Aplicando {} efeitos da primeira Stance",
+                                    firstStanceEffects.size());
+                    ApplyAndTrackEffects(player, firstStanceEffects, g_lastAppliedStanceEffects);
+                    SKSE::log::info("[StanceSink Decline] Aplicando {} efeitos combinados do primeiro Moveset",
+                                    firstMovesetCombinedEffects.size());
+                    ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
+
+                } else {
+                    // Não há stances disponíveis, reseta tudo como no caso 'false'
+                    SKSE::log::info("[StanceSink Decline] Nenhuma stance disponível, resetando tudo.");
+                    g_currentStance = 0;
+                    g_currentMoveset = 0;
+                    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance", 0);
+                    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", 0);
+                    ApplyAndTrackEffects(player, {}, g_lastAppliedStanceEffects);
+                    ApplyAndTrackEffects(player, {}, g_lastAppliedMovesetEffects);
+                }
+            }
+
+            // Atualiza UI e Reenvia Prompts Principais
             UpdatePowerAttackGlobals();
             UpdateSkyPromptTexts();
             SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-            RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
-            RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("cycle_instance", g_currentStance);
-            if (!SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), GlobalControl::g_clientID)) {
-                logger::error("Skyprompt didnt worked Moveset Sink");
-            }
-            break;   
+        }  // Fim do escopo
+        break;   
      
     }
 
@@ -608,11 +753,10 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
         //    - Efeitos em g_lastAppliedStanceEffects que NÃO estão em newStanceEffects são REMOVIDOS.
         //    - Efeitos em newStanceEffects que NÃO estão em g_lastAppliedStanceEffects são ADICIONADOS.
         //    - g_lastAppliedStanceEffects é atualizado para ser igual a newStanceEffects.
-        SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos da Stance {}", newStanceEffects.size(),
-                        g_currentStance);
+
         SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos combinados do Moveset Padrão (Lista Index {})",
                         firstMovesetCombinedEffects.size(), g_currentMoveset);
-        ApplyAndTrackEffects(player, newStanceEffects, g_lastAppliedStanceEffects);
+        //ApplyAndTrackEffects(player, newStanceEffects, g_lastAppliedStanceEffects);
         ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
 
 
@@ -688,14 +832,90 @@ void GlobalControl::MovesetSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
             SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
             SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             break;
-        case SkyPromptAPI::kDeclined:
-            g_currentMoveset = 1;
+        case SkyPromptAPI::kDeclined: {  // Adiciona escopo para variáveis locais
+            SKSE::log::info("[MovesetSink Decline] Resetando para o primeiro moveset.");
+            const auto availableMovesets = animManager->GetAvailableMovesets(player, categoryName, originalStanceIndex);
+            const int maxMovesets = availableMovesets.size();
+
+            // Define o moveset para o primeiro disponível (se houver)
+            g_currentMoveset = (maxMovesets > 0) ? 1 : 0;
+            int originalMovesetIndexToApply = 0;
+            if (g_currentMoveset > 0) {
+                originalMovesetIndexToApply = availableMovesets[0].originalIndex;  // Pega o índice real do primeiro
+            }
+
+            // 1. Aplica o primeiro moveset (ou 0) no jogo
+            RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndexToApply);
+            SKSE::log::info("[MovesetSink Decline] Setando Moveset (Original Index): {}", originalMovesetIndexToApply);
+
+            // 2. Coleta TODOS os efeitos aplicáveis para o PRIMEIRO moveset (Stance + Moveset 1 + SubMoveset 1)
+            std::vector<AppliedEffect> firstMovesetCombinedEffects;
+            auto cat_it = animManager->GetCategories().find(categoryName);
+            if (cat_it != animManager->GetCategories().end()) {
+                const WeaponCategory& category = cat_it->second;
+                // Garante que temos uma stance válida para buscar efeitos
+                if (originalStanceIndex > 0 && originalStanceIndex <= category.instances.size()) {
+                    const auto& stanceInstance = category.instances[originalStanceIndex - 1];
+                    // Efeitos da Stance (sempre incluídos)
+                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                       stanceInstance.appliedEffects.begin(),
+                                                       stanceInstance.appliedEffects.end());
+
+                    // Encontra o ModInstance e SubAnimationInstance correspondentes ao PRIMEIRO moveset
+                    // (originalMovesetIndexToApply)
+                    if (originalMovesetIndexToApply > 0) {
+                        int parentCounter = 0;
+                        const ModInstance* firstModInst = nullptr;
+                        const SubAnimationInstance* firstSubInst = nullptr;
+                        auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);
+
+                        for (const auto& modInst : mutableStanceInstance.modInstances) {
+                            if (!modInst.isSelected) continue;
+                            for (const auto& subInst : modInst.subAnimationInstances) {
+                                bool isParent =
+                                    !(subInst.pFront || subInst.pBack || subInst.pLeft ||
+                                      subInst.pRight || subInst.pFrontRight || subInst.pFrontLeft ||
+                                      subInst.pBackRight || subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+                                if (!subInst.isSelected || !isParent) continue;
+                                parentCounter++;
+                                if (parentCounter == originalMovesetIndexToApply) {  // Achou o primeiro moveset
+                                    firstModInst = &modInst;
+                                    firstSubInst = &subInst;
+                                    goto found_first_moveset_decline_sink;  // Label única
+                                }
+                            }
+                        }
+                    found_first_moveset_decline_sink:;
+                        if (firstModInst) {
+                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                               firstModInst->appliedEffects.begin(),
+                                                               firstModInst->appliedEffects.end());
+                        }
+                        if (firstSubInst) {
+                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
+                                                               firstSubInst->appliedEffects.begin(),
+                                                               firstSubInst->appliedEffects.end());
+                        }
+                    }
+                }
+            }
+            // Remove duplicatas
+            std::sort(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end());
+            firstMovesetCombinedEffects.erase(
+                std::unique(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end()),
+                firstMovesetCombinedEffects.end());
+
+            // 3. Aplica/Remove efeitos para refletir o estado do PRIMEIRO moveset
+            SKSE::log::info("[MovesetSink Decline] Aplicando {} efeitos combinados do primeiro Moveset",
+                            firstMovesetCombinedEffects.size());
+            ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
+
+            // 4. Atualiza UI e Reenvia Prompt
             UpdatePowerAttackGlobals();
             UpdateSkyPromptTexts();
-            RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", g_currentMoveset);
-            //GlobalControl::MovesetText = "Moveset";
-            SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-            break;
+            SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);  // Reenvia o prompt principal
+        }  // Fim do escopo
+        break;
     }
 }
 
@@ -704,76 +924,177 @@ std::span<const SkyPromptAPI::Prompt> GlobalControl::MovesetChangesSink::GetProm
     
 
 void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
-
     auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;  // Sai se não houver jogador
     std::string categoryName = GetCurrentWeaponCategoryName();
     auto animManager = AnimationManager::GetSingleton();
 
-    // O índice da stance (g_currentStance) ainda está no formato de lista (ex: 2 de 2)
-    // Precisamos encontrar o índice original que ele representa.
-    int stanceOriginalIndex = g_currentStance;  // Fallback
-    auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    // Encontra o índice ORIGINAL da stance atual
+    const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    int stanceOriginalIndex = 0;  // 0 = Nenhum
     if (g_currentStance > 0 && g_currentStance <= availableStances.size()) {
         stanceOriginalIndex = availableStances[g_currentStance - 1].originalIndex;
+    } else if (g_currentStance == 0 && !availableStances.empty()) {  // Se stance é 0, usa a primeira disponível
+        // Isso pode acontecer se o jogador sacar a arma sem ter selecionado uma stance antes
+        stanceOriginalIndex = availableStances[0].originalIndex;
+        g_currentStance = 1;  // Define a stance atual como a primeira da lista
+                              // Como a stance mudou implicitamente, precisamos aplicar seus efeitos aqui também
+        std::vector<AppliedEffect> firstStanceEffects;
+        auto cat_it_implicit = animManager->GetCategories().find(categoryName);
+        if (cat_it_implicit != animManager->GetCategories().end()) {
+            const WeaponCategory& category_implicit = cat_it_implicit->second;
+            if (stanceOriginalIndex > 0 && stanceOriginalIndex <= category_implicit.instances.size()) {
+                firstStanceEffects = category_implicit.instances[stanceOriginalIndex - 1].appliedEffects;
+            }
+        }
+        SKSE::log::info("[Moveset Sink] Stance implícita definida para {}. Aplicando {} efeitos.", g_currentStance,
+                        firstStanceEffects.size());
+        ApplyAndTrackEffects(player, firstStanceEffects, g_lastAppliedStanceEffects);
+        ApplyAndTrackEffects(player, {}, g_lastAppliedMovesetEffects);  // Limpa moveset antigo
     }
 
-    // SUBSTITUA ISSO:
-    // int maxMovesets = AnimationManager::GetMaxMovesetsFor(category, stanceIndex);
-    // POR ISSO:
+    // Pega os movesets disponíveis PARA A STANCE ATUAL (agora garantida > 0 se houver stances)
     const auto availableMovesets = animManager->GetAvailableMovesets(player, categoryName, stanceOriginalIndex);
     const int maxMovesets = availableMovesets.size();
 
-    // Se não há movesets configurados para esta stance/arma, não faz nada.
-    if (maxMovesets <= 0) {
-        RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone",0);  // Garante que nenhuma animação toque
-        return;
+    bool movesetChanged = false;  // Flag
+    // Guarda o índice original do moveset ANTES de qualquer mudança
+    int originalMovesetIndexBeforeChange = 0;
+    if (g_currentMoveset > 0 && g_currentMoveset <= maxMovesets) {
+        originalMovesetIndexBeforeChange = availableMovesets[g_currentMoveset - 1].originalIndex;
     }
 
-    //logger::info("before kup");
     switch (event.type) {
         case SkyPromptAPI::kAccepted:
-            if (event.prompt.eventID == 2) {
-                g_currentMoveset -= 1;
-                if (g_currentMoveset < 1) {
-                    g_currentMoveset = maxMovesets;  // Vai para o último
+            if (event.prompt.eventID == 2 || event.prompt.eventID == 3) {  // Next ou Back
+                if (maxMovesets > 0) {                                     // Só muda se houver movesets
+                    int oldMovesetValue = g_currentMoveset;
+                    if (event.prompt.eventID == 2) {  // Back
+                        g_currentMoveset = (g_currentMoveset - 1);
+                        if (g_currentMoveset < 1) g_currentMoveset = maxMovesets;
+                    } else {  // Next
+                        g_currentMoveset = (g_currentMoveset % maxMovesets) + 1;
+                    }
+                    if (g_currentMoveset != oldMovesetValue) {
+                        movesetChanged = true;  // Define a flag AQUI
+                    }
                 }
-                UpdatePowerAttackGlobals();
-                UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
-                break;
             }
-            if (event.prompt.eventID == 3) {
-                g_currentMoveset += 1;
-                if (g_currentMoveset > maxMovesets) {
-                    g_currentMoveset = 1;  // Volta para o primeiro
-                }
-                UpdatePowerAttackGlobals();
-                UpdateSkyPromptTexts();
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
-                break;
-            }
+            break;  // Sai do case kAccepted
+
         case SkyPromptAPI::kTimeout:
-            SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
-            break;
-        case SkyPromptAPI::kUp:
-            if (event.prompt.eventID == 1) {
+            if (maxMovesets > 0) {  // Só reenvia se houver movesets
+                SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
+            } else {  // Se não há movesets, fecha o menu
                 GlobalControl::MovesetChangesOpen = false;
-                if (!Settings::ShowMenu) {
-                    SkyPromptAPI::RequestTheme(GlobalControl::g_clientID, "Cycle Movesets_hidden");
-                }
                 SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
-                SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
-                SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
+                // Reenvia os principais
+                if (SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID)) {
+                }
+                if (SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID)) {
+                }
             }
-            logger::info("kUp aceito");
-            break;
+            return;  // Retorna cedo
+
+        case SkyPromptAPI::kUp:
+            if (event.prompt.eventID == 1) {  // Se soltar o botão que abriu este menu
+                GlobalControl::MovesetChangesOpen = false;
+                SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
+                // Reenvia os prompts principais
+                if (SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID)) {
+                }
+                if (SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID)) {
+                }
+            }
+            return;  // Retorna cedo
+    }  // Fim do switch(event.type)
+
+    // --- LÓGICA DE APLICAR EFEITOS E ATUALIZAR JOGO/UI (CONTROLADA PELA FLAG) ---
+    if (movesetChanged) {
+        int currentListIndex = (g_currentMoveset > 0) ? g_currentMoveset - 1 : -1;
+        // Se g_currentMoveset for 0 (reset ou stance sem movesets), originalMovesetIndexToApply será 0.
+        int originalMovesetIndexToApply =
+            (currentListIndex != -1) ? availableMovesets[currentListIndex].originalIndex : 0;
+
+        SKSE::log::info("[Moveset Change/Reset] Mudando para Moveset (Original Index): {}",
+                        originalMovesetIndexToApply);
+
+        // 1. Aplica o novo moveset no jogo (ou 0 se resetado/vazio)
+        RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndexToApply);
+
+        // 2. Coleta TODOS os efeitos aplicáveis (Stance + Moveset + SubMoveset "Pai")
+        std::vector<AppliedEffect> combinedEffects;
+        auto cat_it = animManager->GetCategories().find(categoryName);
+        if (cat_it != animManager->GetCategories().end()) {
+            const WeaponCategory& category = cat_it->second;  // Usa const reference
+            // Garante que temos uma stance válida para buscar efeitos
+            if (stanceOriginalIndex > 0 && stanceOriginalIndex <= category.instances.size()) {
+                const auto& stanceInstance = category.instances[stanceOriginalIndex - 1];
+                // Efeitos da Stance (sempre incluídos)
+                combinedEffects.insert(combinedEffects.end(), stanceInstance.appliedEffects.begin(),
+                                       stanceInstance.appliedEffects.end());
+
+                // Encontra o ModInstance e SubAnimationInstance correspondentes ao NOVO originalMovesetIndexToApply
+                if (originalMovesetIndexToApply > 0) {  // Só busca se houver um moveset para aplicar
+                    int parentCounter = 0;
+                    const ModInstance* currentModInst = nullptr;
+                    const SubAnimationInstance* currentSubInst = nullptr;
+                    auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);
+
+                    for (const auto& modInst : mutableStanceInstance.modInstances) {
+                        if (!modInst.isSelected) continue;
+                        for (const auto& subInst : modInst.subAnimationInstances) {
+                            bool isParent =
+                                !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
+                                  subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
+                                  subInst.pBackLeft || subInst.pRandom || subInst.pDodge);  // Mesma lógica isParent
+                            if (!subInst.isSelected || !isParent) continue;
+                            parentCounter++;
+                            if (parentCounter == originalMovesetIndexToApply) {  // Achou o moveset alvo
+                                currentModInst = &modInst;
+                                currentSubInst = &subInst;
+                                goto found_instances_moveset_apply;  // Label única
+                            }
+                        }
+                    }
+                found_instances_moveset_apply:;  // Fim da busca
+                    if (currentModInst) {
+                        combinedEffects.insert(combinedEffects.end(), currentModInst->appliedEffects.begin(),
+                                               currentModInst->appliedEffects.end());
+                    }
+                    if (currentSubInst) {
+                        combinedEffects.insert(combinedEffects.end(), currentSubInst->appliedEffects.begin(),
+                                               currentSubInst->appliedEffects.end());
+                    }
+                }  // Fim if (originalMovesetIndexToApply > 0)
+            }  // Fim if (stanceOriginalIndex > 0 ...)
+        }
+        // Remove duplicatas da lista combinada (importante!)
+        std::sort(combinedEffects.begin(), combinedEffects.end());
+        combinedEffects.erase(std::unique(combinedEffects.begin(), combinedEffects.end()), combinedEffects.end());
+
+        // 3. Aplica/Remove efeitos do Moveset (combinados com os da stance)
+        // ApplyAndTrackEffects compara 'combinedEffects' com 'g_lastAppliedMovesetEffects'
+        SKSE::log::info("[Moveset Change/Reset] Aplicando {} efeitos combinados para Moveset (Lista Index {})",
+                        combinedEffects.size(), g_currentMoveset);
+        ApplyAndTrackEffects(player, combinedEffects, g_lastAppliedMovesetEffects);
+
+        // 4. Atualiza outras lógicas e a UI *depois* de aplicar efeitos
+        UpdatePowerAttackGlobals();
+        UpdateSkyPromptTexts();
+
+        // 5. Reenvia os prompts do menu ATUAL (MovesetChangesSink) ou os principais
+        if (GlobalControl::MovesetChangesOpen && event.type != SkyPromptAPI::kDeclined) {
+            SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
+        } else {  // Se foi um kDeclined ou o menu foi fechado
+            SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
+            SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
+        }
+
+    } else if (event.type == SkyPromptAPI::kAccepted && maxMovesets <= 1) {
+        // Caso especial: Apertou next/back mas só tinha 0 ou 1 moveset. Reseta o timer.
+        SkyPromptAPI::SendPrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
     }
-    int currentListIndex = g_currentMoveset - 1;  // 0-based index
-    int originalMovesetIndex = availableMovesets[currentListIndex].originalIndex;
-    RE::PlayerCharacter::GetSingleton()->SetGraphVariableInt("testarone", originalMovesetIndex);
-    
 }
 
 RE::BSEventNotifyControl GlobalControl::CameraChange::ProcessEvent(const SKSE::CameraEvent* a_event,
@@ -1004,6 +1325,127 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
 
     // 3. Atualiza a lista de rastreamento para a próxima mudança
     lastAppliedEffects = newEffectsConst;  // Armazena a lista NÃO ordenada original
+}
+
+bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
+    if (!actor) return false;        // Segurança
+    if (perks.empty()) return true;  // Se não há perks, está disponível
+
+    for (const auto& perkDef : perks) {
+        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
+        if (!perkForm || !actor->HasPerk(perkForm)) {
+            // O ator não tem um dos perks necessários
+            return false;
+        }
+    }
+    // O ator tem todos os perks
+    return true;
+}
+
+void GlobalControl::UpdateEffectsForDirectionalChange(int oldState, int newState) {
+    SKSE::log::info("Mudança de estado direcional detectada: {} -> {}", oldState, newState);
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return;
+
+    // 1. Obter Stance e Moveset Pai atuais
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    auto animManager = AnimationManager::GetSingleton();
+    const auto availableStances = animManager->GetAvailableStances(player, categoryName);
+    int originalStanceIndex = 0;
+    if (g_currentStance > 0 && g_currentStance <= availableStances.size()) {
+        originalStanceIndex = availableStances[g_currentStance - 1].originalIndex;
+    } else {
+        return;
+    }  // Precisa de uma stance ativa
+
+    const auto availableMovesets = animManager->GetAvailableMovesets(player, categoryName, originalStanceIndex);
+    if (g_currentMoveset <= 0 || g_currentMoveset > availableMovesets.size()) {
+        return;  // Precisa de um moveset pai ativo
+    }
+    int originalParentMovesetIndex = availableMovesets[g_currentMoveset - 1].originalIndex;
+
+    // 2. Encontrar Stance, ModInstance Pai, SubAnimationInstance Pai
+    auto cat_it = animManager->GetCategories().find(categoryName);
+    if (cat_it == animManager->GetCategories().end()) return;
+    const WeaponCategory& category = cat_it->second;
+    if (originalStanceIndex <= 0 || originalStanceIndex > category.instances.size()) return;
+    const CategoryInstance& stanceInstance = category.instances[originalStanceIndex - 1];
+    const ModInstance* parentModInst = nullptr;
+    const SubAnimationInstance* parentSubInst = nullptr;
+    int parentCounter = 0;
+    auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);  // Para iterar
+    for (const auto& modInst : mutableStanceInstance.modInstances) {
+        if (!modInst.isSelected) continue;
+        for (const auto& subInst : modInst.subAnimationInstances) {
+            bool isParent =
+                !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight || subInst.pFrontRight ||
+                  subInst.pFrontLeft || subInst.pBackRight || subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+            if (!subInst.isSelected || !isParent) continue;
+            parentCounter++;
+            if (parentCounter == originalParentMovesetIndex) {
+                parentModInst = &modInst;
+                parentSubInst = &subInst;
+                goto found_parent_instances_directional;
+            }
+        }
+    }
+found_parent_instances_directional:;
+    if (!parentModInst || !parentSubInst) {
+        SKSE::log::error("Não foi possível encontrar ModInstance/SubInstance pai para índice {}",
+                         originalParentMovesetIndex);
+        return;
+    }
+
+    // 3. Determinar o Sub-moveset Efetivo (Pai ou Filho Direcional)
+    const SubAnimationInstance* effectiveSubInst = parentSubInst;  // Começa com o pai como padrão
+    if (newState > 0) {                                            // Se há uma direção
+        // Procura o filho correspondente DENTRO do parentModInst
+        for (const auto& childSubInst : parentModInst->subAnimationInstances) {
+            if (!childSubInst.isSelected) continue;
+            // Verifica se é o filho direcional correto
+            bool isDirectionalMatch =
+                (newState == 1 && childSubInst.pFront) || (newState == 2 && childSubInst.pFrontRight) ||
+                (newState == 3 && childSubInst.pRight) || (newState == 4 && childSubInst.pBackRight) ||
+                (newState == 5 && childSubInst.pBack) || (newState == 6 && childSubInst.pBackLeft) ||
+                (newState == 7 && childSubInst.pLeft) ||
+                (newState == 8 && childSubInst.pFrontLeft);  // Adapte os números se necessário
+
+            if (isDirectionalMatch) {
+                // Verifica os perks do filho
+                if (NCheckActorHasPerks(player, childSubInst.perkList)) {
+                    effectiveSubInst = &childSubInst;  // Encontrou filho válido, ele se torna o efetivo
+                    SKSE::log::info("Sub-moveset direcional encontrado e válido: {}", newState);
+                    break;  // Para de procurar filhos
+                } else {
+                    SKSE::log::info("Sub-moveset direcional {} encontrado, mas jogador não tem perks.", newState);
+                    // Continua sendo o pai
+                    break;  // Para de procurar filhos para esta direção
+                }
+            }
+        }
+    }
+
+    // 4. Coletar Efeitos Combinados
+    std::vector<AppliedEffect> combinedEffects;
+    combinedEffects.insert(combinedEffects.end(), stanceInstance.appliedEffects.begin(),
+                           stanceInstance.appliedEffects.end());
+    combinedEffects.insert(combinedEffects.end(), parentModInst->appliedEffects.begin(),
+                           parentModInst->appliedEffects.end());
+    combinedEffects.insert(combinedEffects.end(), effectiveSubInst->appliedEffects.begin(),
+                           effectiveSubInst->appliedEffects.end());
+
+    // 5. Remover Duplicatas
+    std::sort(combinedEffects.begin(), combinedEffects.end());
+    combinedEffects.erase(std::unique(combinedEffects.begin(), combinedEffects.end()), combinedEffects.end());
+
+    // 6. Aplicar
+    SKSE::log::info("Aplicando {} efeitos combinados para estado direcional {}", combinedEffects.size(), newState);
+    ApplyAndTrackEffects(player, combinedEffects, g_lastAppliedMovesetEffects);
+
+    // 7. (Opcional) Atualizar UI? UpdateSkyPromptTexts pode precisar ser chamado
+    //    se o nome do moveset mudar com base na direção (GetCurrentMovesetName já faz isso)
+    //    e se você quiser que os prompts Next/Back reflitam o moveset pai.
+    // UpdateSkyPromptTexts(); // Descomente se necessário
 }
 
 void GlobalControl::TriggerSmartRandomNumber([[maybe_unused]] const std::string& eventSource) {
@@ -1683,20 +2125,8 @@ void GlobalControl::UpdatePromptVisibility() {
     }
 }
 
-void GlobalControl::Intall() {
-    auto& trampoline = SKSE::GetTrampoline();
-    constexpr size_t size_per_hook = 14;
-    trampoline.create(size_per_hook * 3);
-    const REL::Relocation<std::uintptr_t> target{REL::RelocationID(37938, 38894)};  
-    Equip2H::func =
-        trampoline.write_call<5>(target.address() + REL::Relocate(0xe5, 0x170), Equip2H::thunk);
-    const REL::Relocation<std::uintptr_t> targetU{REL::RelocationID(37945, 38901)};  
-    Unequip2H::func = trampoline.write_call<5>(targetU.address() + REL::Relocate(0x138, 0x1b9), Unequip2H::thunk);
-}
 
 std::span<const SkyPromptAPI::Prompt> GlobalControl::EquipMenu::GetPrompts() const { return prompts; }
-
-
 
 void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) const {
     if (event.type != SkyPromptAPI::PromptEventType::kAccepted) {
