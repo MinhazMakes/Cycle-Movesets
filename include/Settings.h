@@ -187,3 +187,13 @@ struct NpcRuleMatch {
 void WheelerKeys();
 inline int WheelerKeyboard = 0;
 inline int WheelerGamepad = 0;
+
+struct TwoHandHandleConfig {
+    std::vector<PerkDef> requiredPerks;
+    int minimumLevel = 0;
+    std::vector<PerkDef> requiredPerksDual2H;
+};
+namespace handle{
+    inline TwoHandHandleConfig player2HConfig;
+    inline TwoHandHandleConfig npc2HConfig;
+}

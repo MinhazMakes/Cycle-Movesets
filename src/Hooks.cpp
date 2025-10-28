@@ -399,6 +399,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         // Agora que a biblioteca de mods (_allMods) está completa, carregamos a configuração da UI.
         _npcCategories = _categories;
         LoadCycleMovesets();
+        Load2HHandleSettings();
         
         SKSE::log::info("Categorias de armas para NPCs inicializadas.");
         } catch (const std::exception& e) {  // <--- E ADICIONAR AQUI
@@ -842,13 +843,156 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             ImGui::EndPopup();
         }
     }
+    void CreatePerkListJsonFor2H(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
+                                 const std::vector<PerkDef>& perkList) {
+        if (perkList.empty()) return;
+        rapidjson::Value perkArray(rapidjson::kArrayType);
+        for (const auto& perk : perkList) {
+            rapidjson::Value perkData(rapidjson::kArrayType);
+            perkData.PushBack(rapidjson::Value(perk.pluginName.c_str(), doc.GetAllocator()), doc.GetAllocator());
+            perkData.PushBack(perk.formID, doc.GetAllocator());
+            // A origem é implícita pelo arquivo, não precisa salvar aqui.
+            perkArray.PushBack(perkData, doc.GetAllocator());
+        }
+        targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
+    }
 
+    // Função auxiliar para carregar (similar a ParsePerkListJson)
+    void ParsePerkListJsonFor2H(const rapidjson::Value& sourceObject, const std::string& keyName,
+                                std::vector<PerkDef>& targetList) {
+        targetList.clear();  // Limpa antes de carregar
+        if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
+            return;
+        }
+        const auto& perkArray = sourceObject[keyName.c_str()].GetArray();
+        for (const auto& perkData : perkArray) {
+            if (perkData.IsArray() && perkData.Size() == 2 && perkData[0].IsString() && perkData[1].IsUint()) {
+                std::string plugin = perkData[0].GetString();
+                RE::FormID formID = perkData[1].GetUint();
+                targetList.push_back({plugin, formID, ""});  // Origem vazia, definida pelo contexto do arquivo
+            }
+        }
+    }
+
+    void AnimationManager::Save2HHandleSettings(bool isPlayer) {
+        const std::filesystem::path configDir = "Data/SKSE/Plugins/CycleMovesets";
+        std::filesystem::path filePath = configDir / (isPlayer ? "Player2Handle.json" : "NPC2Handle.json");
+        const TwoHandHandleConfig& config = isPlayer ? handle::player2HConfig : handle::npc2HConfig;
+
+        SKSE::log::info("Salvando configurações 2H Handle em {}", filePath.string());
+
+        try {
+            if (!std::filesystem::exists(configDir)) {
+                std::filesystem::create_directories(configDir);
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            SKSE::log::error("Falha ao criar diretório {}: {}", configDir.string(), e.what());
+            RE::DebugNotification("ERROR: Failed to save 2H Handle settings!");
+            return;
+        }
+
+        rapidjson::Document doc;
+        doc.SetObject();
+        auto& allocator = doc.GetAllocator();
+
+        doc.AddMember("MinimumLevel", config.minimumLevel, allocator);
+        CreatePerkListJsonFor2H(doc, doc, "RequiredPerks", config.requiredPerks);  // Usa a função auxiliar
+        if (!isPlayer) {
+            CreatePerkListJsonFor2H(doc, doc, "RequiredPerksDual2H",
+                                    config.requiredPerksDual2H);  // <-- Salva o novo campo
+        }
+        // Salvar o arquivo
+        std::ofstream ofs(filePath);
+        if (ofs) {
+            rapidjson::StringBuffer buffer;
+            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+            doc.Accept(writer);
+            ofs << buffer.GetString();
+            ofs.close();
+            SKSE::log::info("Configurações 2H Handle salvas com sucesso.");
+            RE::DebugNotification(isPlayer ? "Player 2H Handle settings saved!" : "NPC 2H Handle settings saved!");
+        } else {
+            SKSE::log::error("Falha ao abrir {} para escrita!", filePath.string());
+            RE::DebugNotification("ERROR: Failed to save 2H Handle settings!");
+        }
+    }
+
+    void AnimationManager::Load2HHandleSettings() {
+        const std::filesystem::path configDir = "Data/SKSE/Plugins/CycleMovesets";
+        const std::vector<std::pair<std::string, TwoHandHandleConfig*>> configs = {
+            {"Player2Handle.json", &handle::player2HConfig}, {"NPC2Handle.json", &handle::npc2HConfig}};
+
+        SKSE::log::info("Carregando configurações 2H Handle...");
+
+        for (const auto& pair : configs) {
+            std::filesystem::path filePath = configDir / pair.first;
+            TwoHandHandleConfig* targetConfig = pair.second;
+
+            if (!std::filesystem::exists(filePath)) {
+                SKSE::log::info("Arquivo {} não encontrado. Usando valores padrão.", filePath.string());
+                *targetConfig = {};  // Reseta para o padrão (nível 0, sem perks)
+                continue;
+            }
+
+            std::ifstream ifs(filePath);
+            if (!ifs) {
+                SKSE::log::error("Falha ao abrir {} para leitura!", filePath.string());
+                continue;
+            }
+
+            std::string jsonContent((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            ifs.close();
+
+            rapidjson::Document doc;
+            doc.Parse(jsonContent.c_str());
+
+            if (doc.HasParseError() || !doc.IsObject()) {
+                SKSE::log::error("Erro no parse do JSON ou arquivo não é um objeto: {}. Usando padrão.",
+                                 filePath.string());
+                *targetConfig = {};
+                continue;
+            }
+
+            if (doc.HasMember("MinimumLevel") && doc["MinimumLevel"].IsInt()) {
+                targetConfig->minimumLevel = doc["MinimumLevel"].GetInt();
+            } else {
+                targetConfig->minimumLevel = 0;
+            }
+
+            ParsePerkListJsonFor2H(doc, "RequiredPerks", targetConfig->requiredPerks);  // Usa a função auxiliar
+            if (targetConfig == &handle::npc2HConfig) {
+                ParsePerkListJsonFor2H(doc, "RequiredPerksDual2H",
+                                       targetConfig->requiredPerksDual2H);  // <-- Carrega o novo campo
+                SKSE::log::info("... Perks Dual 2H: {}", targetConfig->requiredPerksDual2H.size());  // Log adicional
+            } else {
+                // Garante que a lista dual do player esteja vazia se carregar de um arquivo antigo
+                targetConfig->requiredPerksDual2H.clear();
+            }
+            SKSE::log::info("Configurações carregadas de {}: Nível {}, {} Perks.", filePath.string(),
+                            targetConfig->minimumLevel, targetConfig->requiredPerks.size());
+        }
+        SKSE::log::info("Carregamento das configurações 2H Handle concluído.");
+    }
     // Esta é a nova função principal da UI que você registrará no SKSEMenuFramework
     void AnimationManager::DrawMainMenu() {
         // Primeiro, desenhamos o sistema de abas
         if (ImGui::BeginTabBar("MainTabs")) {
             if (ImGui::BeginTabItem(LOC("tab_movesets"))) {
                 DrawAnimationManager();  // Chama a UI da primeira aba
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(LOC("tab_2h_handle"))) {  // Nome da aba traduzido
+                // Chama a função reutilizável com os parâmetros do JOGADOR
+                Draw2HHandleTabContent(LOC("player_2h_handle_settings_title"),  // Título
+                                       handle::player2HConfig,                // Config do jogador
+                                       "##Player2HPerks",                       // ID botão perk
+                                       "##PlayerLevel",                         // ID input nível
+                                       LOC("tooltip_player_2h_perks"),          // Tooltip perk
+                                       LOC("tooltip_player_2h_level"),          // Tooltip nível
+                                       LOC("save_player_2h_settings"),          // Texto botão salvar
+                                       true,                                    // isPlayerConfig = true
+                                       false                                    // isNPC = false
+                );
                 ImGui::EndTabItem();
             }
             //if (ImGui::BeginTabItem(LOC("tab_moveset_creator"))) {
@@ -871,8 +1015,9 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         DrawStanceEditorPopup();
         DrawRestartPopup();
         DrawCreateCategoryModal();
-        DrawPerkSelectorPopup();
-        DrawEffectSelectorPopup();
+       /* DrawPerkSelectorPopup();
+        DrawEffectSelectorPopup();*/
+        DrawConditionsEffectsPopup();
         
     }
 
@@ -1056,11 +1201,137 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         }
     }
 
+    void AnimationManager::Draw2HHandleTabContent(
+        const char* title,                      // Título da seção (Player ou NPC)
+        TwoHandHandleConfig& config,  // Referência à config (player ou npc)
+        const char* perkButtonID,               // ID único para o botão de perks normal
+        const char* levelInputID,               // ID único para o input de nível
+        const char* perkTooltip,                // Tooltip do botão de perks normal
+        const char* levelTooltip,               // Tooltip do input de nível
+        const char* saveButtonText,             // Texto do botão Salvar
+        bool isPlayerConfig,                    // Flag para Save2HHandleSettings
+        bool isNPC                              // Flag para mostrar campo extra de NPC
+    ) {
+        ImGui::Text("%s", title);  // Usa o título passado como parâmetro
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // --- Perks Normais ---
+        std::string perkLabel =
+            std::format("{} ({}){}", LOC("required_perks"), config.requiredPerks.size(), perkButtonID);  // Usa LOC e ID
+        if (ImGui::Button(perkLabel.c_str())) {
+            _perksToDisplayInPopup = config.requiredPerks;
+            _inheritedPerkFormIDs.clear();
+            _effectsToDisplayInPopup.clear();  // Limpa effects (não aplicável para 2H config)
+            _inheritedEffectFormIDs.clear();
+
+            // Define ambos os sets de ponteiros (embora só perks sejam usados aqui)
+            _stanceToEditPerk = nullptr;
+            _movesetToEditPerk = nullptr;
+            _subMovesetToEditPerk = nullptr;
+            _stanceToEditEffect = nullptr;
+            _movesetToEditEffect = nullptr;
+            _subMovesetToEditEffect = nullptr;
+
+            _editingPlayer2HPerks = isPlayerConfig;
+            _editingNPC2HPerks = !isPlayerConfig;
+            _editingNPCDual2HPerks = false;
+
+            _isConditionsEffectsPopupOpen = true;  // Abre o popup combinado
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", perkTooltip);  // Usa o tooltip passado
+        }
+
+        ImGui::Spacing();
+
+        // --- Nível Mínimo ---
+        ImGui::PushItemWidth(100);
+        // Adiciona o ID único ao InputInt
+        if (ImGui::InputInt(std::format("{} {}", LOC("minimum_level"), levelInputID).c_str(), &config.minimumLevel)) {
+            if (config.minimumLevel < 0) config.minimumLevel = 0;
+        }
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", levelTooltip);  // Usa o tooltip passado
+        }
+
+        ImGui::Spacing();
+
+        // --- Perks Dual 2H (SOMENTE NPC) ---
+        if (isNPC) {
+            ImGui::Separator();  // Separador visual
+            ImGui::Spacing();
+
+            std::string dualPerkLabel = std::format("{} ({})##NPCDual2HPerks", LOC("required_perks_dual_2h"),
+                                                    config.requiredPerksDual2H.size());  // Label e ID únicos
+            if (ImGui::Button(dualPerkLabel.c_str())) {
+                _perksToDisplayInPopup = config.requiredPerksDual2H;
+                _inheritedPerkFormIDs.clear();
+                _effectsToDisplayInPopup.clear();
+                _inheritedEffectFormIDs.clear();
+
+                // Define ambos os sets de ponteiros
+                _stanceToEditPerk = nullptr;
+                _movesetToEditPerk = nullptr;
+                _subMovesetToEditPerk = nullptr;
+                _stanceToEditEffect = nullptr;
+                _movesetToEditEffect = nullptr;
+                _subMovesetToEditEffect = nullptr;
+
+                _editingPlayer2HPerks = false;
+                _editingNPC2HPerks = false;
+                _editingNPCDual2HPerks = true;  // Ativa a flag DUAL
+
+                _isConditionsEffectsPopupOpen = true;  // Abre o popup combinado
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", LOC("tooltip_required_perks_dual_2h"));  // Tooltip específico
+            }
+            ImGui::Spacing();
+        }
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Botão Salvar
+        if (ImGui::Button(saveButtonText)) {       // Usa o texto passado
+            Save2HHandleSettings(isPlayerConfig);  // Usa a flag passada
+        }
+    }
+
     void AnimationManager::DrawNPCMenu() { 
-        DrawNPCManager();
+        if (ImGui::BeginTabBar("NPCTabs")) {
+            if (ImGui::BeginTabItem("NPC Rules")) {
+                    DrawNPCManager();
+                    ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(LOC("tab_npc_2h_handle"))) {  // Nome da aba traduzido
+                // Chama a função reutilizável com os parâmetros do NPC
+                Draw2HHandleTabContent(LOC("npc_2h_handle_settings_title"),  // Título
+                                       handle::npc2HConfig,                // Config do NPC
+                                       "##NPC2HPerks",                       // ID botão perk normal
+                                       "##NPCLevel",                         // ID input nível
+                                       LOC("tooltip_npc_2h_perks"),          // Tooltip perk normal
+                                       LOC("tooltip_npc_2h_level"),          // Tooltip nível
+                                       LOC("save_npc_2h_settings"),          // Texto botão salvar
+                                       false,                                // isPlayerConfig = false
+                                       true  // isNPC = true (para mostrar o campo extra)
+                );
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
         DrawAddModModal();
         DrawRestartPopup();
         DrawNpcSelectionModal();
+        DrawConditionsEffectsPopup();
     }
 
     int AnimationManager::GetMaxMovesetsFor(const std::string& category, int stanceIndex) { 
@@ -1103,35 +1374,41 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                     if (tab_open) {
                         category.activeInstanceIndex = i;
                         CategoryInstance& instance = category.instances[i];
-                        std::string stancePerkLabel =
-                            std::format("Stance Perks ({})##StancePerk_{}", instance.perkList.size(), i);
-
-                        // --- MUDANÇA #1: LÓGICA DO BOTÃO "STANCE PERKS" ATUALIZADA ---
-                        if (ImGui::Button(stancePerkLabel.c_str())) {
+                        std::string combinedLabel =
+                            std::format("C({}) / E({})##StanceCondEff_{}", instance.perkList.size(),
+                                        instance.appliedEffects.size(), i);
+                        if (ImGui::Button(combinedLabel.c_str())) {
+                            // 1. Limpa listas de exibição e herança
                             _perksToDisplayInPopup.clear();
                             _inheritedPerkFormIDs.clear();
+                            _effectsToDisplayInPopup.clear();
+                            _inheritedEffectFormIDs.clear();
 
-                            // Perks da Stance são próprios, não herdados.
+                            // 2. Preenche dados de Perks (Stance não herda perks)
                             _perksToDisplayInPopup = instance.perkList;
+                            // _inheritedPerkFormIDs permanece vazio para Stance
 
+                            // 3. Preenche dados de Effects (Stance não herda efeitos)
+                            _effectsToDisplayInPopup = instance.appliedEffects;
+                            // _inheritedEffectFormIDs permanece vazio para Stance
+
+                            // 4. Define TODOS os ponteiros de alvo relevantes
                             _stanceToEditPerk = &instance;
                             _movesetToEditPerk = nullptr;
                             _subMovesetToEditPerk = nullptr;
-                            _isPerkSelectorOpen = true;
-                        }
-                        ImGui::SameLine();  // Coloca ao lado do botão de Perks
-                        std::string stanceEffectLabel =
-                            std::format("Apply Effects ({})##StanceEffect_{}", instance.appliedEffects.size(), i);
-                        if (ImGui::Button(stanceEffectLabel.c_str())) {
-                            _effectsToDisplayInPopup.clear();
-                            _inheritedEffectFormIDs.clear();                     // Stance não herda de ninguém
-                            _effectsToDisplayInPopup = instance.appliedEffects;  // Mostra os efeitos próprios da stance
-
-                            _stanceToEditEffect = &instance;  // Define o alvo para salvar
+                            _stanceToEditEffect = &instance;  // Define também o ponteiro de efeito
                             _movesetToEditEffect = nullptr;
                             _subMovesetToEditEffect = nullptr;
-                            _isEffectSelectorOpen = true;  // Abre o popup
+
+                            // 5. Limpa flags 2H (não aplicável aqui)
+                            _editingPlayer2HPerks = false;
+                            _editingNPC2HPerks = false;
+                            _editingNPCDual2HPerks = false;
+
+                            // 6. Abre o popup combinado
+                            _isConditionsEffectsPopupOpen = true;
                         }
+                        ImGui::SameLine();
                     
                         std::map<SubAnimationInstance*, int> playlistNumbers;
                         std::map<SubAnimationInstance*, int> parentNumbersForChildren;
@@ -1214,47 +1491,46 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                             ImGui::SameLine();
                             ImGui::Checkbox("##modselect", &modInstance.isSelected);
                             ImGui::SameLine();
-                            std::string movesetPerkLabel =
-                                std::format("Perks ({})##MovesetPerk_{}", modInstance.perkList.size(), mod_i);
-                            if (ImGui::Button(movesetPerkLabel.c_str())) {
+                            std::string combinedMovesetLabel =
+                                std::format("C({}) / E({})##MovesetCondEff_{}", modInstance.perkList.size(),
+                                            modInstance.appliedEffects.size(), mod_i);
+                            if (ImGui::Button(combinedMovesetLabel.c_str())) {
                                 _perksToDisplayInPopup.clear();
                                 _inheritedPerkFormIDs.clear();
+                                _effectsToDisplayInPopup.clear();
+                                _inheritedEffectFormIDs.clear();
 
-                                // 1. Adiciona perks herdados da Stance
-                                for (const auto& perk : instance.perkList) {
+                                // Perks: Herda da Stance
+                                for (const auto& perk : instance.perkList) {  // 'instance' é a Stance pai
                                     _perksToDisplayInPopup.push_back(perk);
                                     _inheritedPerkFormIDs.insert(perk.formID);
                                 }
-                                // 2. Adiciona perks próprios do Moveset
-                                for (const auto& perk : modInstance.perkList) {
-                                    _perksToDisplayInPopup.push_back(perk);
-                                }
+                                _perksToDisplayInPopup.insert(_perksToDisplayInPopup.end(),
+                                                              modInstance.perkList.begin(),
+                                                              modInstance.perkList.end());  // Adiciona os próprios
 
-                                _stanceToEditPerk = nullptr;
-                                _movesetToEditPerk = &modInstance;
-                                _subMovesetToEditPerk = nullptr;
-                                _isPerkSelectorOpen = true;
-                            }
-                            ImGui::SameLine();  // Coloca ao lado do botão de Perks do Moveset
-                            std::string movesetEffectLabel = std::format("Apply Effects ({})##MovesetEffect_{}",
-                                                                         modInstance.appliedEffects.size(), mod_i);
-                            if (ImGui::Button(movesetEffectLabel.c_str())) {
-                                _effectsToDisplayInPopup.clear();
-                                _inheritedEffectFormIDs.clear();
-                                // 1. Adiciona efeitos herdados da Stance
-                                for (const auto& effect : instance.appliedEffects) {
+                                // Effects: Herda da Stance
+                                for (const auto& effect : instance.appliedEffects) {  // 'instance' é a Stance pai
                                     _effectsToDisplayInPopup.push_back(effect);
                                     _inheritedEffectFormIDs.insert(effect.formID);
                                 }
-                                // 2. Adiciona efeitos próprios do Moveset
-                                for (const auto& effect : modInstance.appliedEffects) {
-                                    _effectsToDisplayInPopup.push_back(effect);
-                                }
+                                _effectsToDisplayInPopup.insert(
+                                    _effectsToDisplayInPopup.end(), modInstance.appliedEffects.begin(),
+                                    modInstance.appliedEffects.end());  // Adiciona os próprios
 
+                                // Define ponteiros
+                                _stanceToEditPerk = nullptr;
+                                _movesetToEditPerk = &modInstance;
+                                _subMovesetToEditPerk = nullptr;
                                 _stanceToEditEffect = nullptr;
-                                _movesetToEditEffect = &modInstance;  // Define o alvo
+                                _movesetToEditEffect = &modInstance;  // Define também o de efeito
                                 _subMovesetToEditEffect = nullptr;
-                                _isEffectSelectorOpen = true;
+
+                                _editingPlayer2HPerks = false;
+                                _editingNPC2HPerks = false;
+                                _editingNPCDual2HPerks = false;
+
+                                _isConditionsEffectsPopupOpen = true;
                             }
                             ImGui::SameLine();
                             bool node_open = ImGui::TreeNode(sourceMod.name.c_str());
@@ -1296,65 +1572,71 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                                     ImGui::BeginGroup();
                                     ImGui::Checkbox("##subselect", &subInstance.isSelected);
                                     ImGui::SameLine();
-                                    std::string subPerkLabel = std::format("Perks ({})##SubMovesetPerk_{}",
-                                                                           subInstance.perkList.size(), sub_j);
-                                    if (ImGui::Button(subPerkLabel.c_str())) {
+
+                                    std::string combinedSubLabel =
+                                        std::format("C({}) / E({})##SubCondEff_{}_{}",
+                                                    subInstance.perkList.size(), subInstance.appliedEffects.size(),
+                                                    mod_i,   
+                                                    sub_j);  
+
+                                    if (ImGui::Button(combinedSubLabel.c_str())) {
+                                        
                                         _perksToDisplayInPopup.clear();
                                         _inheritedPerkFormIDs.clear();
+                                        _effectsToDisplayInPopup.clear();
+                                        _inheritedEffectFormIDs.clear();
 
-                                        // 1. Adiciona perks herdados da Stance
+                                       
                                         for (const auto& perk : instance.perkList) {
                                             _perksToDisplayInPopup.push_back(perk);
                                             _inheritedPerkFormIDs.insert(perk.formID);
                                         }
-                                        // 2. Adiciona perks herdados do Moveset
+                                        
                                         for (const auto& perk : modInstance.perkList) {
-                                            // Evita adicionar o mesmo perk herdado duas vezes
                                             if (_inheritedPerkFormIDs.find(perk.formID) ==
                                                 _inheritedPerkFormIDs.end()) {
                                                 _perksToDisplayInPopup.push_back(perk);
                                                 _inheritedPerkFormIDs.insert(perk.formID);
                                             }
                                         }
-                                        // 3. Adiciona perks próprios do Sub-Moveset
-                                        for (const auto& perk : subInstance.perkList) {
-                                            _perksToDisplayInPopup.push_back(perk);
-                                        }
+                                        
+                                        _perksToDisplayInPopup.insert(_perksToDisplayInPopup.end(),
+                                                                      subInstance.perkList.begin(),
+                                                                      subInstance.perkList.end());
 
-                                        _stanceToEditPerk = nullptr;
-                                        _movesetToEditPerk = nullptr;
-                                        _subMovesetToEditPerk = &subInstance;
-                                        _isPerkSelectorOpen = true;
-                                    }
-                                    ImGui::SameLine();
-                                    std::string subEffectLabel =
-                                        std::format("Apply Effects ({})##SubEffect_{}_{}",
-                                                    subInstance.appliedEffects.size(), mod_i, sub_j);
-                                    if (ImGui::Button(subEffectLabel.c_str())) {
-                                        _effectsToDisplayInPopup.clear();
-                                        _inheritedEffectFormIDs.clear();
-                                        // 1. Adiciona efeitos herdados da Stance
+                                        
                                         for (const auto& effect : instance.appliedEffects) {
                                             _effectsToDisplayInPopup.push_back(effect);
                                             _inheritedEffectFormIDs.insert(effect.formID);
                                         }
-                                        // 2. Adiciona efeitos herdados do Moveset
+                                        
                                         for (const auto& effect : modInstance.appliedEffects) {
                                             if (_inheritedEffectFormIDs.find(effect.formID) ==
-                                                _inheritedEffectFormIDs.end()) {  // Evita duplicatas herdadas
+                                                _inheritedEffectFormIDs.end()) {
                                                 _effectsToDisplayInPopup.push_back(effect);
                                                 _inheritedEffectFormIDs.insert(effect.formID);
                                             }
                                         }
-                                        // 3. Adiciona efeitos próprios do Sub-Moveset
-                                        for (const auto& effect : subInstance.appliedEffects) {
-                                            _effectsToDisplayInPopup.push_back(effect);
-                                        }
+                                        
+                                        _effectsToDisplayInPopup.insert(_effectsToDisplayInPopup.end(),
+                                                                        subInstance.appliedEffects.begin(),
+                                                                        subInstance.appliedEffects.end());
 
+                                        
+                                        _stanceToEditPerk = nullptr;
+                                        _movesetToEditPerk = nullptr;
+                                        _subMovesetToEditPerk = &subInstance;
                                         _stanceToEditEffect = nullptr;
                                         _movesetToEditEffect = nullptr;
-                                        _subMovesetToEditEffect = &subInstance;  // Define o alvo
-                                        _isEffectSelectorOpen = true;
+                                        _subMovesetToEditEffect = &subInstance;  
+
+                                        
+                                        _editingPlayer2HPerks = false;
+                                        _editingNPC2HPerks = false;
+                                        _editingNPCDual2HPerks = false;
+
+                                        
+                                        _isConditionsEffectsPopupOpen = true;
                                     }
                                     ImGui::SameLine();
                                     ImGui::BeginGroup();
@@ -6538,35 +6820,75 @@ void AnimationManager::DrawPerkSelectorPopup() {
                 // Remove os perks herdados antes de salvar, para não duplicá-los
                 std::vector<PerkDef> perksToSave;
                 for (const auto& perk : tempSelectedPerks) {
-                    if (_inheritedPerkFormIDs.find(perk.formID) == _inheritedPerkFormIDs.end()) {
-                        perksToSave.push_back(perk);
+                    // A lógica de herança só se aplica a Stance/Moveset/SubMoveset
+                    bool isInherited = _inheritedPerkFormIDs.count(perk.formID);
+                    if (!isInherited || _editingPlayer2HPerks || _editingNPC2HPerks || _editingNPCDual2HPerks) {
+                        std::string origin = perk.origin;
+                        if (_editingPlayer2HPerks)
+                            origin = "Player2H";
+                        else if (_editingNPC2HPerks)
+                            origin = "NPC2H";
+                        else if (_editingNPCDual2HPerks)
+                            origin = "NPCDual2H";  
+                        else if (perk.origin.empty()) {
+                            if (_stanceToEditPerk)
+                                origin = "Stance";
+                            else if (_movesetToEditPerk)
+                                origin = "Moveset";
+                            else if (_subMovesetToEditPerk)
+                                origin = "SubMoveset";
+                        }
+
+                        // Adiciona o perk com a origem correta (garante não salvar herdados nos casos antigos)
+                        if (!isInherited || _editingPlayer2HPerks || _editingNPC2HPerks || _editingNPCDual2HPerks) {
+                            perksToSave.push_back({perk.pluginName, perk.formID, origin});
+                        }
                     }
                 }
 
-                if (_stanceToEditPerk)
+                // Salva na struct apropriada
+                if (_editingPlayer2HPerks) {
+                    handle::player2HConfig.requiredPerks = perksToSave;
+                } else if (_editingNPC2HPerks) {
+                    handle::npc2HConfig.requiredPerks = perksToSave;
+                } else if (_editingNPCDual2HPerks) {  // <-- Salva na nova lista
+                    handle::npc2HConfig.requiredPerksDual2H = perksToSave;
+                } else if (_stanceToEditPerk) {
                     _stanceToEditPerk->perkList = perksToSave;
-                else if (_movesetToEditPerk)
+                } else if (_movesetToEditPerk) {
                     _movesetToEditPerk->perkList = perksToSave;
-                else if (_subMovesetToEditPerk)
+                } else if (_subMovesetToEditPerk) {
                     _subMovesetToEditPerk->perkList = perksToSave;
+                }
 
+                // Reseta flags e fecha
+                _editingPlayer2HPerks = false;
+                _editingNPC2HPerks = false;
+                _editingNPCDual2HPerks = false;  // <-- Reseta a nova flag
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("Clear All", ImVec2(120, 0))) {
-                // Remove da lista temporária todos os perks que NÃO são herdados
-                tempSelectedPerks.erase(std::remove_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
-                                                       [&](const PerkDef& p) {
-                                                           return _inheritedPerkFormIDs.find(p.formID) ==
-                                                                  _inheritedPerkFormIDs.end();
-                                                       }),
-                                        tempSelectedPerks.end());
+                // Só mantém perks herdados se NÃO estiver editando as configs 2H
+                if (!_editingPlayer2HPerks && !_editingNPC2HPerks && !_editingNPCDual2HPerks) {
+                    tempSelectedPerks.erase(std::remove_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                           [&](const PerkDef& p) {
+                                                               return _inheritedPerkFormIDs.find(p.formID) ==
+                                                                      _inheritedPerkFormIDs.end();
+                                                           }),
+                                            tempSelectedPerks.end());
+                } else {  // Se estiver editando config 2H, limpa tudo
+                    tempSelectedPerks.clear();
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(120, 0))) {
+                _editingPlayer2HPerks = false;
+                _editingNPC2HPerks = false;
+                _editingNPCDual2HPerks = false;
                 ImGui::CloseCurrentPopup();
             }
-
+            ImGui::SameLine();
             ImGui::EndPopup();
         }
 }
@@ -6768,13 +7090,17 @@ RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
     }
 
 int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
+        const auto ui = RE::UI::GetSingleton();
+
+        // Verificar se a UI existe E se o "InventoryMenu" está aberto
+        if (ui && ui->IsMenuOpen("InventoryMenu")) {
         if (is_open.load()) {
     #ifdef GetObject
     #undef GetObject
     #endif
             if (const auto a_bound = a1->GetObject()) {
                 if (a_bound->IsWeapon()) {
-                    logger::info("Mostrando prompt de arma para {}", a_bound->GetName());
+                    //logger::info("Mostrando prompt de arma para {}", a_bound->GetName());
                     GlobalControl::EquipMenu::GetSingleton()->Show(a_bound);
                 } else {
                     // Em vez de 'RemovePrompt', chamamos nossa função 'Hide'
@@ -6785,8 +7111,304 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
                 GlobalControl::EquipMenu::GetSingleton()->Hide();
             }
         }
+        } else {
+            GlobalControl::EquipMenu::GetSingleton()->Hide();
+        }
 
         return originalFunction(a1);
+}
+
+void AnimationManager::DrawConditionsEffectsPopup() {
+    if (_isConditionsEffectsPopupOpen) {
+        ImGui::OpenPopup("Conditions & Effects");  // Use LOC(...)
+        _isConditionsEffectsPopupOpen = false;     // Reseta o gatilho
     }
 
+    // Listas temporárias para a UI (movidas para static dentro da função ou mantidas como membro da classe se preferir)
+    static std::vector<PerkDef> tempSelectedPerks;
+    static std::vector<AppliedEffect> tempSelectedEffects;
 
+    // Configuração do popup (tamanho, posição)
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    // Ajuste o tamanho conforme necessário, talvez um pouco maior que os popups individuais
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x * 0.6f, viewport->Size.y * 0.7f));
+
+    if (ImGui::BeginPopupModal("Conditions & Effects", NULL, ImGuiWindowFlags_None)) {  
+
+        bool isEditing2HConfig = _editingPlayer2HPerks || _editingNPC2HPerks || _editingNPCDual2HPerks;
+
+        // Carrega/Prepara os dados quando o popup aparece
+        if (ImGui::IsWindowAppearing()) {
+            // Perks: Limpa e preenche _perksToDisplayInPopup e _inheritedPerkFormIDs
+            // (Esta lógica precisa ser movida para onde o botão é clicado, veja passo 4)
+            // Remove duplicatas de _perksToDisplayInPopup
+            std::sort(_perksToDisplayInPopup.begin(), _perksToDisplayInPopup.end(),
+                      [](const PerkDef& a, const PerkDef& b) { return a.formID < b.formID; });
+            _perksToDisplayInPopup.erase(
+                std::unique(_perksToDisplayInPopup.begin(), _perksToDisplayInPopup.end(),
+                            [](const PerkDef& a, const PerkDef& b) { return a.formID == b.formID; }),
+                _perksToDisplayInPopup.end());
+            tempSelectedPerks = _perksToDisplayInPopup;  // Copia para a lista temporária da UI
+
+            // Effects: Limpa e preenche _effectsToDisplayInPopup e _inheritedEffectFormIDs
+            // (Esta lógica precisa ser movida para onde o botão é clicado, veja passo 4)
+            // Remove duplicatas de _effectsToDisplayInPopup
+            std::sort(_effectsToDisplayInPopup.begin(), _effectsToDisplayInPopup.end());
+            _effectsToDisplayInPopup.erase(
+                std::unique(_effectsToDisplayInPopup.begin(), _effectsToDisplayInPopup.end()),
+                _effectsToDisplayInPopup.end());
+            tempSelectedEffects = _effectsToDisplayInPopup;  // Copia para a lista temporária da UI
+
+            if (isEditing2HConfig) {
+                _effectsToDisplayInPopup.clear();
+                _inheritedEffectFormIDs.clear();
+                tempSelectedEffects.clear();
+                SKSE::log::info("[DrawConditionsEffectsPopup] Editando config 2H, listas de efeitos limpas.");
+            }
+        }
+
+        // Cria as abas
+        if (ImGui::BeginTabBar("ConditionsEffectsTabs")) {
+            // --- Aba de Required Perks ---
+            if (ImGui::BeginTabItem("Required Perks")) {                             // Use LOC(...)
+                ImGui::InputText("Filter Perks", _perkFilter, sizeof(_perkFilter));  // Use LOC(...)
+                ImGui::Separator();
+
+                // Lista de Perks (conteúdo de DrawPerkSelectorPopup - parte da lista)
+                if (ImGui::BeginChild("PerkListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2))) {
+                    std::string filter_str = _perkFilter;
+                    std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
+
+                    for (const auto& perk : _allPerks) {
+                        std::string perk_name_lower = perk.name;
+                        std::transform(perk_name_lower.begin(), perk_name_lower.end(), perk_name_lower.begin(),
+                                       ::tolower);
+
+                        if (filter_str.empty() || perk_name_lower.find(filter_str) != std::string::npos) {
+                            auto it = std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                   [&](const PerkDef& p) { return p.formID == perk.formID; });
+                            bool is_selected = (it != tempSelectedPerks.end());
+                            bool is_inherited = _inheritedPerkFormIDs.count(perk.formID);
+
+                            if (is_inherited) ImGui::BeginDisabled();
+
+                            if (ImGui::Checkbox(perk.name.c_str(), &is_selected)) {
+                                if (!is_inherited) {  // Só permite alterar se não for herdado
+                                    if (is_selected) {
+                                        std::string origin = "";  // A origem será definida ao salvar
+                                        tempSelectedPerks.push_back({perk.pluginName, perk.formID, origin});
+                                    } else {
+                                        auto to_erase =
+                                            std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                         [&](const PerkDef& p) { return p.formID == perk.formID; });
+                                        if (to_erase != tempSelectedPerks.end()) {
+                                            tempSelectedPerks.erase(to_erase);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (is_inherited) ImGui::EndDisabled();
+
+                            ImGui::SameLine(350);
+                            ImGui::TextDisabled("%s | %s", perk.editorID.c_str(), perk.pluginName.c_str());
+                        }
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::Separator();
+
+                // Botões específicos da aba Perks
+                if (ImGui::Button(LOC("save"), ImVec2(120, 0))) {
+                    std::vector<PerkDef> perksToSave;
+                    for (const auto& perk : tempSelectedPerks) {
+                        bool isInherited = _inheritedPerkFormIDs.count(perk.formID);
+                        // Salva apenas se NÃO for herdado OU se estiver editando configs 2H
+                        if (!isInherited || _editingPlayer2HPerks || _editingNPC2HPerks || _editingNPCDual2HPerks) {
+                            std::string origin = perk.origin;  // Mantem a origem se já existir
+                            // Define a origem correta se for uma nova adição ou config 2H
+                            if (origin.empty() || _editingPlayer2HPerks || _editingNPC2HPerks ||
+                                _editingNPCDual2HPerks) {
+                                if (_editingPlayer2HPerks)
+                                    origin = "Player2H";
+                                else if (_editingNPC2HPerks)
+                                    origin = "NPC2H";
+                                else if (_editingNPCDual2HPerks)
+                                    origin = "NPCDual2H";
+                                else if (_stanceToEditPerk)
+                                    origin = "Stance";  // Usa ponteiro ...Perk
+                                else if (_movesetToEditPerk)
+                                    origin = "Moveset";  // Usa ponteiro ...Perk
+                                else if (_subMovesetToEditPerk)
+                                    origin = "SubMoveset";  // Usa ponteiro ...Perk
+                            }
+                            perksToSave.push_back({perk.pluginName, perk.formID, origin});
+                        }
+                    }
+
+                    // Salva na struct apropriada usando os ponteiros ...Perk
+                    if (_editingPlayer2HPerks)
+                        handle::player2HConfig.requiredPerks = perksToSave;
+                    else if (_editingNPC2HPerks)
+                        handle::npc2HConfig.requiredPerks = perksToSave;
+                    else if (_editingNPCDual2HPerks)
+                        handle::npc2HConfig.requiredPerksDual2H = perksToSave;
+                    else if (_stanceToEditPerk)
+                        _stanceToEditPerk->perkList = perksToSave;
+                    else if (_movesetToEditPerk)
+                        _movesetToEditPerk->perkList = perksToSave;
+                    else if (_subMovesetToEditPerk)
+                        _subMovesetToEditPerk->perkList = perksToSave;
+
+                    ImGui::CloseCurrentPopup();  // Fecha o popup inteiro
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(LOC("clear_all"), ImVec2(120, 0))) {
+                    // Mantém apenas os herdados na lista temporária
+                    tempSelectedPerks.erase(std::remove_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                                           [&](const PerkDef& p) {
+                                                               return _inheritedPerkFormIDs.find(p.formID) ==
+                                                                      _inheritedPerkFormIDs.end();
+                                                           }),
+                                            tempSelectedPerks.end());
+                }
+
+                ImGui::EndTabItem();
+            }
+            if (!isEditing2HConfig) {
+                // --- Aba de Apply Effects ---
+                if (ImGui::BeginTabItem("Apply Effects")) {  // Use LOC(...)
+                                                             // Filtros (conteúdo de DrawEffectSelectorPopup)
+                    ImGui::InputText("Filter Name/EditorID", _effectFilter, sizeof(_effectFilter));  // Use LOC(...)
+                    ImGui::SameLine();
+                    const char* types[] = {"All Types", "Perks", "Spells"};
+                    ImGui::PushItemWidth(150);
+                    ImGui::Combo("Filter Type", &_effectTypeFilter, types,
+                                 sizeof(types) / sizeof(types[0]));  // Use LOC(...)
+                    ImGui::PopItemWidth();
+                    ImGui::Separator();
+
+                    // Lista de Efeitos (conteúdo de DrawEffectSelectorPopup - parte da lista)
+                    if (ImGui::BeginChild("EffectListChild", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2))) {
+                        std::string filter_str = _effectFilter;
+                        std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
+
+                        auto draw_list = [&](const auto& sourceList, AppliedEffect::EffectType type,
+                                             const char* typeLabel) {
+                            for (const auto& item : sourceList) {
+                                std::string name_lower = item.name;
+                                std::string editorid_lower = item.editorID;
+                                std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                                std::transform(editorid_lower.begin(), editorid_lower.end(), editorid_lower.begin(),
+                                               ::tolower);
+
+                                if (filter_str.empty() || name_lower.find(filter_str) != std::string::npos ||
+                                    editorid_lower.find(filter_str) != std::string::npos) {
+                                    auto it = std::find_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                                           [&](const AppliedEffect& ae) {
+                                                               return ae.formID == item.formID && ae.type == type;
+                                                           });
+                                    bool is_selected = (it != tempSelectedEffects.end());
+                                    bool is_inherited = _inheritedEffectFormIDs.count(item.formID);
+
+                                    if (is_inherited) ImGui::BeginDisabled();
+
+                                    if (ImGui::Checkbox(item.name.c_str(), &is_selected)) {
+                                        if (!is_inherited) {  // Só permite alterar se não for herdado
+                                            if (is_selected) {
+                                                std::string origin = "";  // Origem definida ao salvar
+                                                tempSelectedEffects.push_back(
+                                                    {type, item.pluginName, item.formID, origin});
+                                            } else {
+                                                auto to_erase =
+                                                    std::find_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                                                 [&](const AppliedEffect& ae) {
+                                                                     return ae.formID == item.formID && ae.type == type;
+                                                                 });
+                                                if (to_erase != tempSelectedEffects.end()) {
+                                                    tempSelectedEffects.erase(to_erase);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (is_inherited) ImGui::EndDisabled();
+
+                                    ImGui::SameLine(400);
+                                    ImGui::TextDisabled("[%s] %s | %s", typeLabel, item.editorID.c_str(),
+                                                        item.pluginName.c_str());
+                                }
+                            }
+                        };
+
+                        if (_effectTypeFilter == 0 || _effectTypeFilter == 1)
+                            draw_list(_allPerks, AppliedEffect::EffectType::Perk, "Perk");
+                        if (_effectTypeFilter == 0 || _effectTypeFilter == 2)
+                            draw_list(_allSpells, AppliedEffect::EffectType::Spell, "Spell");
+                    }
+                    ImGui::EndChild();
+                    ImGui::Separator();
+
+                    // Botões específicos da aba Effects
+                    if (ImGui::Button(LOC("save"), ImVec2(120, 0))) {
+                        std::vector<AppliedEffect> effectsToSave;
+                        for (const auto& effect : tempSelectedEffects) {
+                            bool isInherited = _inheritedEffectFormIDs.count(effect.formID);
+                            if (!isInherited) {                      // Salva apenas os NÃO herdados
+                                std::string origin = effect.origin;  // Mantem a origem se já existir
+                                if (origin.empty()) {                // Define a origem se for uma nova adição
+                                    if (_stanceToEditEffect)
+                                        origin = "Stance";  // Usa ponteiro ...Effect
+                                    else if (_movesetToEditEffect)
+                                        origin = "Moveset";  // Usa ponteiro ...Effect
+                                    else if (_subMovesetToEditEffect)
+                                        origin = "SubMoveset";  // Usa ponteiro ...Effect
+                                }
+                                effectsToSave.push_back({effect.type, effect.pluginName, effect.formID, origin});
+                            }
+                        }
+                        // Salva na struct apropriada usando os ponteiros ...Effect
+                        if (_stanceToEditEffect)
+                            _stanceToEditEffect->appliedEffects = effectsToSave;
+                        else if (_movesetToEditEffect)
+                            _movesetToEditEffect->appliedEffects = effectsToSave;
+                        else if (_subMovesetToEditEffect)
+                            _subMovesetToEditEffect->appliedEffects = effectsToSave;
+
+                        ImGui::CloseCurrentPopup();  // Fecha o popup inteiro
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(LOC("clear_all"), ImVec2(120, 0))) {
+                        // Mantém apenas os herdados na lista temporária
+                        tempSelectedEffects.erase(std::remove_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                                                 [&](const AppliedEffect& p) {
+                                                                     return _inheritedEffectFormIDs.find(p.formID) ==
+                                                                            _inheritedEffectFormIDs.end();
+                                                                 }),
+                                                  tempSelectedEffects.end());
+                    }
+
+                    ImGui::EndTabItem();
+                }
+            }
+
+                ImGui::EndTabBar();
+            
+        }
+
+            ImGui::SameLine();
+            // Botão Close geral para o popup
+            if (ImGui::Button(LOC("close"), ImVec2(120, 0))) {
+                // Reseta flags 2H Handle ao fechar sem salvar explicitamente uma aba
+                _editingPlayer2HPerks = false;
+                _editingNPC2HPerks = false;
+                _editingNPCDual2HPerks = false;
+                ImGui::CloseCurrentPopup();
+            }
+        
+
+        ImGui::EndPopup();
+    }
+}

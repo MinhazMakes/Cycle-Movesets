@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 #include <algorithm> // Para std::max_element
+#include "Settings.h"
 
 // Scancodes das teclas WASD
 constexpr uint32_t W_KEY = 0x11;
@@ -24,6 +25,20 @@ bool isTwoHanded(RE::TESForm* a_weap) {
     return false;
 }
 
+bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
+    if (!actor) return false;        // Segurança
+    if (perks.empty()) return true;  // Se não há perks, está disponível
+
+    for (const auto& perkDef : perks) {
+        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
+        if (!perkForm || !actor->HasPerk(perkForm)) {
+            // O ator não tem um dos perks necessários
+            return false;
+        }
+    }
+    // O ator tem todos os perks
+    return true;
+}
 
 void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
     if (!actor || !item || !targetSlot) return;
@@ -40,44 +55,70 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         return;
     }
 
-    int npctype;
-    npc->GetGraphVariableInt("CycleMovesetNpcType",npctype);  
+    logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Iniciando verificação para '{}' ({:08X}) ---", npc->GetName(),
+                 npc->GetFormID());
 
-
+    // Check if already dual wielding 2H weapons (no need to re-equip)
     auto equippedItemL = npc->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
     auto equippedItemR = npc->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
 
-    // 2. Inicializa os ponteiros de arma como nulos
     RE::TESObjectWEAP* leftWeapon = nullptr;
     RE::TESObjectWEAP* rightWeapon = nullptr;
 
-    // 3. Loga e converte o item da mão ESQUERDA (se existir)
     if (equippedItemL) {
         leftWeapon = equippedItemL->As<RE::TESObjectWEAP>();
-    } else {
     }
-
-    // 4. Loga e converte o item da mão DIREITA (se existir)
     if (equippedItemR) {
         rightWeapon = equippedItemR->As<RE::TESObjectWEAP>();
+    }
+
+    // If already wielding two 2H, or one 2H in the correct slot, do nothing
+    if (isTwoHanded(leftWeapon) && isTwoHanded(rightWeapon)) {
+        logger::info("  - Status: NPC já está empunhando duas armas de duas mãos.");
+        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
+        return;  // Already correctly equipped
+    }
+    // If only one 2H is equipped, it might be occupying the TwoHand slot, let's check
+    auto equippedItem2H = npc->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
+    if (equippedItem2H && isTwoHanded(equippedItem2H)) {
+        logger::info("  - Status: NPC está empunhando uma arma de duas mãos (slot 2H). Não aplicará dual wield.");
+        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
+        return;  // Standard 2H equip, don't interfere
+    }
+
+    // --- NOVA VERIFICAÇÃO DE PERKS ---
+    logger::info("  - Verificando Perks para Dual Wield 2H...");
+    bool hasRequiredPerks =
+        NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H);  // Uses the specific list
+
+    if (!hasRequiredPerks) {
+        logger::info("  - Falha na Verificação: NPC não possui os perks necessários para Dual Wield 2H.");
+        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
+        return;  // Exit if perks are missing
     } else {
+        logger::info("  - Sucesso na Verificação: NPC possui os perks necessários.");
     }
+    // --- FIM DA VERIFICAÇÃO DE PERKS ---
 
-    if (isTwoHanded(leftWeapon)) {
-        logger::info(" NPC already has a two-handed weapon equipped in the left hand.");
-        return;
-    } else if (isTwoHanded(rightWeapon)) {
-        logger::info(" NPC already has a two-handed weapon equipped in the right hand.");
-        return;
-    }
-       
-    // 3. Escanear o inventário
+    // Scan inventory for suitable weapons
+    logger::info("  - Escaneando inventário...");
     std::vector<RE::TESObjectWEAP*> suitableWeapons;
-    auto inventory = npc->GetInventory();
+    auto inventory = npc->GetInventory();  // GetInventory returns std::map<TESBoundObject*, std::pair<std::int32_t,
+                                           // std::unique_ptr<InventoryEntryData>>>
 
-    for (const auto& [item, entry] : inventory) {
-        if (item->IsWeapon() && isTwoHanded(item)) {
-            suitableWeapons.push_back(item->As<RE::TESObjectWEAP>());
+    for (const auto& [item, data] : inventory) {
+        // Check if the item is a weapon and is two-handed
+        if (item && item->IsWeapon() && isTwoHanded(item)) {
+            // Check quantity - must have at least one not equipped (or total >= 2 if checking equipped separately)
+            if (data.first > 0) {  // data.first is the count
+                auto weaponPtr = item->As<RE::TESObjectWEAP>();
+                // Avoid adding already equipped weapons if they are the ones equipped
+                if (weaponPtr != leftWeapon && weaponPtr != rightWeapon) {
+                    suitableWeapons.push_back(weaponPtr);
+                } else if (data.first >= 2) {  // Allow if equipped but has more than one
+                    suitableWeapons.push_back(weaponPtr);
+                }
+            }
         }
     }
 
@@ -1327,20 +1368,7 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
     lastAppliedEffects = newEffectsConst;  // Armazena a lista NÃO ordenada original
 }
 
-bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
-    if (!actor) return false;        // Segurança
-    if (perks.empty()) return true;  // Se não há perks, está disponível
 
-    for (const auto& perkDef : perks) {
-        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
-        if (!perkForm || !actor->HasPerk(perkForm)) {
-            // O ator não tem um dos perks necessários
-            return false;
-        }
-    }
-    // O ator tem todos os perks
-    return true;
-}
 
 void GlobalControl::UpdateEffectsForDirectionalChange(int oldState, int newState) {
     SKSE::log::info("Mudança de estado direcional detectada: {} -> {}", oldState, newState);
@@ -1536,9 +1564,6 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
     }
 
     if (isRelevantMenu) {
-        // A mágica acontece aqui!
-        // event->opening é 'true' se o menu está abrindo, e 'false' se está fechando.
-        // Nós simplesmente atribuímos esse valor à nossa flag.
         Hooks::is_open.store(event->opening);
         //logger::info("Menu relevante '{}' mudou de estado. is_open agora é: {}", event->menuName.c_str(),event->opening);
     }
@@ -1552,8 +1577,7 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
     }
     // Se um menu está FECHANDO
     else {
-        // Após o fechamento, verificamos se NENHUM outro menu está aberto.
-        // É importante chamar IsAnyMenuOpen() AQUI.
+        SkyPromptAPI::RemovePrompt(EquipMenu::GetSingleton(), GlobalControl::Dynamicgrip);
         if (ShouldShowPrompts() && !Cycleopen) {
             Cycleopen = true;
             UpdateSkyPromptTexts();
@@ -1582,8 +1606,6 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
         if (g_comboState.isTimerRunning && std::chrono::steady_clock::now() >= g_comboState.comboTimeoutTimestamp) {
             g_comboState.isTimerRunning = false;
 
-            // --- LOG DE DIAGNÓSTICO ---
-            //SKSE::log::info("[UpdateHandler] TIMEOUT! Fim de combo.");
 
             if (Settings::CycleMoveset) {
                 SKSE::GetTaskInterface()->AddTask([]() { TriggerSmartRandomNumber("Fim de Combo (C++)"); });
@@ -1591,9 +1613,6 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
         }
         else if(eventName == "weaponSwing" || eventName == "weaponLeftSwing" ||
             eventName == "h2hAttack" || eventName == "PowerAttack_Start_end") {
-            //SKSE::log::info("[AnimationEventHandler] Evento '{}' detectado. Timer INICIADO. g_comboState.isTimerRunning AGORA É: {}",eventName, g_comboState.isTimerRunning);
-            //SKSE::log::info("[AnimationEventHandler] Evento '{}' detectado. Timer INICIADO.", eventName);
-            // Apenas definimos o estado e o momento em que o combo deve terminar.
             g_comboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::CycleTimer * 1000));
             g_comboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
@@ -1605,32 +1624,6 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
                 TriggerSmartRandomNumber(std::string(eventName));
             }
         }
-
-        //if (eventName == "HitFrame") {
-        //    SKSE::log::info("Evento 'HitFrame' recebido do jogador!");
-        //    // Coloque aqui a sua lógica para o HitFrame...
-
-        //} else if (eventName == "Bfco_AttackStartFX") {
-        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", true);
-        //    player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
-        //    player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 0);
-        //    SKSE::log::info("Evento 'Bfco_AttackStartFX' recebido. Abrindo a janela de combo...");
-        //    // Ex: GetGraphVariable("BFCO_IsInComboWindow")->SetBool(true);
-
-        //} else if (eventName == "MCO_PowerWinClose" || eventName == "MCO_WinClose") {
-        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", false);
-        //    //player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
-        //    //player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
-        //    SKSE::log::info("Evento 'BFCO_IsPlayerInputOK' recebido. Fechando a janela de combo...");
-
-        //}else if (eventName == "MCO_PowerWinOpen" || eventName == "MCO_WinOpen") {
-        //    player->SetGraphVariableBool("NEW_BFCO_IsInComboWindow", true);
-        //    player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
-        //    //player->SetGraphVariableInt("NEW_BFCO_IsNormalAttacking", 0);
-        //    //player->SetGraphVariableInt("NEW_BFCO_IsPowerAttacking", 1);
-        //    SKSE::log::info("Evento 'BFCO_IsPlayerInputOK' recebido. Fechando a janela de combo...");
-
-        //}
 
     }
     return RE::BSEventNotifyControl::kContinue;
@@ -1696,7 +1689,7 @@ RE::BSEventNotifyControl GlobalControl::NpcCycleSink::ProcessEvent(const RE::BSA
             //SKSE::log::info("[UpdateHandler] Combo do ator {:08X} expirou.", formID);
             // Adicionamos a lógica para chamar a função para o ator específico
             // Usando SKSE::GetTaskInterface() ainda é uma boa prática
-            //SKSE::GetTaskInterface()->AddTask([actor]() { NPCrandomNumber(actor, "Fim de Combo"); });
+            SKSE::GetTaskInterface()->AddTask([actor]() { NPCrandomNumber(actor, "Fim de Combo"); });
         }
     }
     return RE::BSEventNotifyControl::kContinue;
@@ -1756,8 +1749,7 @@ void GlobalControl::NPCrandomNumber(RE::Actor* targetActor, const std::string& e
     state.previousMoveset = state.lastMoveset;
     state.lastMoveset = chosenMoveset;
 
-    SKSE::log::info("{} (Ator {:08X}): Escolheu o moveset #{} da prioridade {}", eventSource, formID,
-                    chosenMoveset.index, chosenMoveset.priority);
+    //SKSE::log::info("{} (Ator {:08X}): Escolheu o moveset #{} da prioridade {}", eventSource, formID,chosenMoveset.index, chosenMoveset.priority);
 }
 
 RE::BSEventNotifyControl GlobalControl::NpcCombatTracker::ProcessEvent(const RE::TESCombatEvent* a_event,
@@ -2134,7 +2126,6 @@ void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) con
     }
 
     auto player = RE::PlayerCharacter::GetSingleton();
-    // Usa a função auxiliar para pegar o item que estava sob o cursor
     const auto itemEntry = Hooks::GetSelectedEntryInMenu();
 
     if (!player || !itemEntry) {
@@ -2150,30 +2141,26 @@ void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) con
 
     switch (event.prompt.eventID) {
         case 0:  // Equipar na mão ESQUERDA
-            logger::info("Equipando {} na mão esquerda.", itemToEquip->GetName());
+            //logger::info("Equipando {} na mão esquerda.", itemToEquip->GetName());
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_leftHandSlot);
             break;
 
         case 1:  // Equipar na mão DIREITA
-            logger::info("Equipando {} na mão direita.", itemToEquip->GetName());
+            //logger::info("Equipando {} na mão direita.", itemToEquip->GetName());
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_rightHandSlot);
             break;
         case 2:  // Equipar nas duas mãos
-            logger::info("Equipando {} nas duas maos.", itemToEquip->GetName());
+            //logger::info("Equipando {} nas duas maos.", itemToEquip->GetName());
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_twoHandSlot);
             break;
     }
 }
 
-void GlobalControl::EquipMenu::Show(const RE::TESBoundObject* a_weapon) const {
-    // A chave está aqui: RE::Inventory3DManager
-    // Este singleton gerencia o modelo 3D que você vê no menu.
-    if (const auto a_ref = RE::Inventory3DManager::GetSingleton()->tempRef) {
-        // 'tempRef' é uma referência temporária para o modelo 3D na tela.
-        // Pegamos o FormID dela para usar como nosso refid.
-        const auto refid = a_ref->GetFormID();
+void GlobalControl::EquipMenu::Show(RE::TESBoundObject* a_weapon) const {
+    RE::TESObjectWEAP* weapon = nullptr;
 
-        // ATUALIZAMOS O REFID DOS NOSSOS PROMPTS!
+    if (const auto a_ref = RE::Inventory3DManager::GetSingleton()->tempRef) {
+        const auto refid = a_ref->GetFormID();
         Left_Hand.refid = refid;
         Right_Hand.refid = refid;
     } else {
@@ -2181,9 +2168,11 @@ void GlobalControl::EquipMenu::Show(const RE::TESBoundObject* a_weapon) const {
         Left_Hand.refid = 0;
         Right_Hand.refid = 0;
     }
-
-    // Agora que os prompts têm o refid correto, nós os enviamos.
-    SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip);  
+    weapon = a_weapon->As<RE::TESObjectWEAP>();
+    if (isTwoHanded(weapon)) {
+        SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip); 
+    }
+    
 }
 
 void GlobalControl::EquipMenu::Hide() const {
@@ -2214,44 +2203,76 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
         weapon = a_form->As<RE::TESObjectWEAP>();
         originalSlot = weapon->GetEquipSlot();  // Salva o slot original (ex: g_twoHandSlot)
 
+        bool canUse2HHandle = false;
+        const TwoHandHandleConfig* configToCheck = nullptr;
+
+        if (a_actor->IsPlayerRef()) {
+            configToCheck = &handle::player2HConfig;
+            SKSE::log::info("Equip2H: Verificando requisitos 2H Handle para o Jogador.");
+        } else {
+            configToCheck = &handle::npc2HConfig;
+            SKSE::log::info("Equip2H: Verificando requisitos 2H Handle para NPC '{}'.", a_actor->GetName());
+        }
+
+        if (configToCheck) {
+            // Checa Nível
+            bool levelMet = a_actor->GetLevel() >= configToCheck->minimumLevel;
+            // Checa Perks (usando a função de Utils.cpp)
+            bool perksMet = NCheckActorHasPerks(a_actor, configToCheck->requiredPerks);
+
+            SKSE::log::info("  - Nível Mínimo: {} (Ator: {}) -> {}", configToCheck->minimumLevel, a_actor->GetLevel(),
+                            levelMet ? "OK" : "FALHOU");
+            SKSE::log::info("  - Perks Necessários: {} -> {}", configToCheck->requiredPerks.size(),
+                            perksMet ? "OK" : "FALHOU");
+
+            if (levelMet && perksMet) {
+                canUse2HHandle = true;
+                SKSE::log::info("  --> Requisitos 2H Handle CUMPRIDOS.");
+            } else {
+                SKSE::log::warn("  --> Requisitos 2H Handle NÃO CUMPRIDOS. Equipamento normal será forçado.");
+            }
+        } else {
+            SKSE::log::warn("Equip2H: Não foi possível determinar a configuração 2H Handle a ser verificada.");
+        }
         // Força o jogo a pensar que é um item de mão direita
-        
-        weapon->SetEquipSlot(Hooks::g_rightHandSlot);
-        func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
+        if (canUse2HHandle) {
+            weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+            func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
 
-        // 3. RESTAURAR (DEPOIS de chamar func)
-        if (weapon && originalSlot) {
-            // Restaura o slot original para o estado normal (2H)
-            weapon->SetEquipSlot(originalSlot);
+            // 3. RESTAURAR (DEPOIS de chamar func)
+            if (weapon && originalSlot) {
+                // Restaura o slot original para o estado normal (2H)
+                weapon->SetEquipSlot(originalSlot);
+            }
+            if (a_actor) {
+                logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
+
+                // Função helper para checar e logar um slot
+                auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
+                    if (!slot) {
+                        logger::warn("Tentando logar um slot nulo: {}", slotName);
+                        return;
+                    }
+
+                    RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
+                    if (equippedItem) {
+                        // Se o item existir, loga o nome dele
+                        logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
+                    } else {
+                        // Se estiver vazio, loga "Vazio"
+                        logger::info("Slot [{}]: Vazio", slotName);
+                    }
+                };
+
+                // Logar os três slots que você pediu
+                logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
+                logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
+                logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
+
+                logger::info("-------------------------------------------------");
+            }
+            return;
         }
-        if (a_actor) {
-            logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
-
-            // Função helper para checar e logar um slot
-            auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
-                if (!slot) {
-                    logger::warn("Tentando logar um slot nulo: {}", slotName);
-                    return;
-                }
-
-                RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
-                if (equippedItem) {
-                    // Se o item existir, loga o nome dele
-                    logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
-                } else {
-                    // Se estiver vazio, loga "Vazio"
-                    logger::info("Slot [{}]: Vazio", slotName);
-                }
-            };
-
-            // Logar os três slots que você pediu
-            logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
-            logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
-            logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
-
-            logger::info("-------------------------------------------------");
-        }
-        return;
     }
 
     

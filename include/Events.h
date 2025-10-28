@@ -14,8 +14,13 @@ class AnimationManager : public clib_util::singleton::ISingleton<AnimationManage
 public:   
     
     void ScanAnimationMods();
+    void Save2HHandleSettings(bool isPlayer);
+    void Load2HHandleSettings();
     void DrawMainMenu();
     void DrawUserMovesetCreator();
+    void Draw2HHandleTabContent(const char* title, TwoHandHandleConfig& config, const char* perkButtonID,
+                                const char* levelInputID, const char* perkTooltip, const char* levelTooltip,
+                                const char* saveButtonText, bool isPlayerConfig, bool isNPC);
     void DrawNPCMenu();
     static int GetMaxMovesetsFor(const std::string& category, int stanceIndex);
     //int GetMaxMovesetsForNPC(RE::Actor* targetActor, const std::string& category, int stanceIndex);
@@ -74,6 +79,7 @@ private:
     std::vector<SpellInfo> _allSpells;
 
     bool _isEffectSelectorOpen = false;
+    bool _isConditionsEffectsPopupOpen = false;
     CategoryInstance* _stanceToEditEffect = nullptr;
     ModInstance* _movesetToEditEffect = nullptr;
     SubAnimationInstance* _subMovesetToEditEffect = nullptr;
@@ -370,6 +376,8 @@ private:
     void DrawPerkSelectorPopup();
     void DrawEffectSelectorPopup();
 
+    void DrawConditionsEffectsPopup();
+
 
     // Funções para converter seus dados para JSON (essencial para o cache)
     void FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef);
@@ -381,7 +389,9 @@ private:
     ModInstance* _movesetToEditPerk = nullptr;
     SubAnimationInstance* _subMovesetToEditPerk = nullptr;
     char _perkFilter[128] = "";
-
+    bool _editingPlayer2HPerks = false;
+    bool _editingNPC2HPerks = false;
+    bool _editingNPCDual2HPerks = false;
 };
 
 struct FileSaveConfig {

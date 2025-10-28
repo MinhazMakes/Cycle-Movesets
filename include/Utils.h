@@ -134,6 +134,7 @@ namespace GlobalControl {
         std::array<SkyPromptAPI::Prompt, 1> prompts = {menu_stance};
         
     };
+
     class EquipMenu final : public SkyPromptAPI::PromptSink, public clib_util::singleton::ISingleton<EquipMenu> {
     public:
         // Retorna a lista de prompts que queremos monitorar
@@ -146,12 +147,13 @@ namespace GlobalControl {
         void ProcessEvent(SkyPromptAPI::PromptEvent event) const override;
         mutable bool except = false;
         // void UpdatePrompts() { prompts[0] = menu_stance; }
-        void Show(const RE::TESBoundObject* a_weapon) const;
+        void Show(RE::TESBoundObject* a_weapon) const;
         void Hide() const;
 
     private:
         // Um array para guardar todos os nossos prompts
     };
+
     class EquipEventSink : public RE::BSTEventSink<RE::TESEquipEvent>,
                            public clib_util::singleton::ISingleton<EquipEventSink> {
     public:
@@ -399,13 +401,3 @@ private:
 
 }
 
-namespace stl {
-    using namespace SKSE::stl;
-
-    template <class T>
-    void write_thunk_call(std::uintptr_t a_src) {
-        auto& trampoline = SKSE::GetTrampoline();
-        SKSE::AllocTrampoline(14);
-        T::func = trampoline.write_call<5>(a_src, T::thunk);
-    }
-}

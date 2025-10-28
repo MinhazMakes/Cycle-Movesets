@@ -45,7 +45,8 @@ namespace Settings {
     inline int menuVisibilityMode = 2;  // 0: Hidden, 1: Only in Combat, 2: When Weapon Draw
     inline bool bfcoDirectionalAttacks = true;
     inline bool EnableAllNPC = true;
-    
+
+
 }
 
 // Namespace para a nossa UI
@@ -226,6 +227,8 @@ namespace MyMenu {
     void __stdcall RenderKeybindPage();
     void SaveSettings();
     void LoadSettings();
+    void SaveLockPerks();
+    void LoadLockPerks();
     
 }
 namespace GlobalInputCapture {
