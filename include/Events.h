@@ -56,7 +56,10 @@ public:
     std::vector<AvailableItem> GetAvailableMovesets(RE::Actor* actor, const std::string& categoryName,
                                                     int stanceOriginalIndex);
     void LoadGameDataForEffects();
-
+    bool _isStanceManagementPopupOpen = false;
+    void OnHit(RE::Actor* actor, int hitCount);
+    void ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& effects);
+    
 private:
     std::vector<PerkDef> _perksToDisplayInPopup;
     std::set<RE::FormID> _inheritedPerkFormIDs;
@@ -87,6 +90,13 @@ private:
     int _effectTypeFilter = 0;  // 0=All, 1=Perk, 2=MagicEffect, 3=Spell
     std::vector<AppliedEffect> _effectsToDisplayInPopup;
     std::set<RE::FormID> _inheritedEffectFormIDs;  // Para rastrear efeitos herdados
+
+    HitCountRule* _hitRuleToEdit = nullptr;   // Ponteiro para a regra sendo editada (modo de edição)
+    bool _isHitCountNumberPopupOpen = false;  // Controla o popup pequeno para inserir o número
+    int _hitCountRuleEditorHitNumber = 0;     // Buffer para o número de hits do popup pequeno
+    std::vector<HitCountRule>* _hitRuleListOwner = nullptr;  // Ponteiro para o vetor (da stance/moveset) que estamos editando
+    std::vector<HitCountRule> _inheritedHitRules;
+    std::vector<AppliedEffect> _lastAppliedHitEffects;
     
     
     std::map<std::string, WeaponCategory> _categories;
@@ -132,9 +142,12 @@ private:
 
 
 
-    void SaveStanceNames();
-
-    void LoadStanceNames();
+    void SaveStances();  // Anteriormente SaveStanceNames
+    void LoadStances();  // Anteriormente LoadStanceNames
+    WeaponCategory* _categoryToApplyDeletion = nullptr;
+    int _stanceIndexToDelete = -1;
+    
+    void DrawStanceManagementPopup();
 
     void DrawStanceEditorPopup();
 
@@ -196,8 +209,6 @@ private:
     // Filtro de pesquisa
     char _movesetFilter[128] = "";
     char _subMovesetFilter[128] = "";
-    // Da load na ordem dos movesets e submovesets
-    void LoadStateForSubAnimation(size_t modIdx, size_t subAnimIdx);
 
     // --- NOVAS FUNÇÕES DE CARREGAMENTO/SALVAMENTO DA UI ---
 
@@ -221,6 +232,7 @@ private:
     bool _isEditStanceModalOpen = false;
     WeaponCategory* _categoryToEdit = nullptr;
     int _stanceIndexToEdit = -1;
+    int _stanceNewIndexInput = 0;
     char _editStanceNameBuffer[64] = "";
 
      // Buffers para os campos de texto da UI
@@ -373,10 +385,8 @@ private:
     void AddIsEquipSlotOccupiedCondition(rapidjson::Value& conditionsArray, const std::string& slotName, bool negated,
                                          rapidjson::Document::AllocatorType& allocator);
 
-    void DrawPerkSelectorPopup();
-    void DrawEffectSelectorPopup();
-
     void DrawConditionsEffectsPopup();
+    void DrawHitCountNumberPopup();
 
 
     // Funções para converter seus dados para JSON (essencial para o cache)
@@ -392,6 +402,7 @@ private:
     bool _editingPlayer2HPerks = false;
     bool _editingNPC2HPerks = false;
     bool _editingNPCDual2HPerks = false;
+
 };
 
 struct FileSaveConfig {

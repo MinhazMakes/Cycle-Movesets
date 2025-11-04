@@ -25,6 +25,22 @@ bool isTwoHanded(RE::TESForm* a_weap) {
     return false;
 }
 
+bool isOneHanded(RE::TESForm* a_weap) {
+    if (!a_weap || !a_weap->IsWeapon()) return false;
+    auto weap = a_weap->As<RE::TESObjectWEAP>();
+    // Verifica explicitamente os tipos de 1H
+    if (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace()) {
+        return true;
+    }
+    return false;
+}
+
+bool isShield(RE::TESForm* a_item) {
+    if (!a_item || !a_item->IsArmor()) return false;
+    auto armor = a_item->As<RE::TESObjectARMO>();
+    return armor->IsShield();
+}
+
 bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
     if (!actor) return false;        // Segurança
     if (perks.empty()) return true;  // Se não há perks, está disponível
@@ -55,94 +71,187 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         return;
     }
 
-    logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Iniciando verificação para '{}' ({:08X}) ---", npc->GetName(),
+    auto equipManager = RE::ActorEquipManager::GetSingleton();
+    if (!equipManager) {
+        return;
+    }
+
+    logger::info("--- [CheckAndEquipHandle] Iniciando verificação para '{}' ({:08X}) ---", npc->GetName(),
                  npc->GetFormID());
 
-    // Check if already dual wielding 2H weapons (no need to re-equip)
+    // 1. Obter o status atual do equipamento
     auto equippedItemL = npc->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
     auto equippedItemR = npc->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
-
-    RE::TESObjectWEAP* leftWeapon = nullptr;
-    RE::TESObjectWEAP* rightWeapon = nullptr;
-
-    if (equippedItemL) {
-        leftWeapon = equippedItemL->As<RE::TESObjectWEAP>();
-    }
-    if (equippedItemR) {
-        rightWeapon = equippedItemR->As<RE::TESObjectWEAP>();
-    }
-
-    // If already wielding two 2H, or one 2H in the correct slot, do nothing
-    if (isTwoHanded(leftWeapon) && isTwoHanded(rightWeapon)) {
-        logger::info("  - Status: NPC já está empunhando duas armas de duas mãos.");
-        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
-        return;  // Already correctly equipped
-    }
-    // If only one 2H is equipped, it might be occupying the TwoHand slot, let's check
     auto equippedItem2H = npc->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
-    if (equippedItem2H && isTwoHanded(equippedItem2H)) {
-        logger::info("  - Status: NPC está empunhando uma arma de duas mãos (slot 2H). Não aplicará dual wield.");
-        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
-        return;  // Standard 2H equip, don't interfere
+
+    bool isR_2H = isTwoHanded(equippedItemR);
+    bool isL_2H = isTwoHanded(equippedItemL);
+    bool is2H_2H = isTwoHanded(equippedItem2H);
+
+    // 2. Verificações de saída antecipada
+    if (isL_2H && isR_2H) {
+        logger::info("  - Status: NPC já está empunhando duas armas de duas mãos (Dual 2H).");
+        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        return;  // Já está em dual wielding 2H
     }
 
-    // --- NOVA VERIFICAÇÃO DE PERKS ---
-    logger::info("  - Verificando Perks para Dual Wield 2H...");
-    bool hasRequiredPerks =
-        NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H);  // Uses the specific list
-
-    if (!hasRequiredPerks) {
-        logger::info("  - Falha na Verificação: NPC não possui os perks necessários para Dual Wield 2H.");
-        logger::info("--- [CheckAndEquipDualTwoHandedForNPC] Fim da verificação ---");
-        return;  // Exit if perks are missing
-    } else {
-        logger::info("  - Sucesso na Verificação: NPC possui os perks necessários.");
+    if (isR_2H && equippedItemL != nullptr) {
+        std::string leftItemName = "Item Desconhecido";
+        if (equippedItemL) {
+            leftItemName = equippedItemL->GetName();
+        }
+        logger::info("  - Status: NPC já está empunhando 2H na direita e '{}' na esquerda. Não interferir.",
+                     leftItemName);
+        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        return;
     }
-    // --- FIM DA VERIFICAÇÃO DE PERKS ---
+    // 3. Verificar Perks
+    logger::info("  - Verificando Perks...");
+    bool hasBase2HPerks = NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerks);
+    bool hasDual2HPerks = NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H);
+    if (is2H_2H) {
+        if (hasBase2HPerks || hasDual2HPerks) {
+        } else {
+            logger::info("  - Status: NPC está empunhando uma arma de duas mãos (slot 2H). Não interferir.");
+            logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+            return;  // Equipamento 2H padrão, não interferir
+        }
+    }
+    // Se o NPC não tem nem os perks base, não fazemos nada.
+    if (!hasBase2HPerks) {
+        logger::info("  - Falha na Verificação: NPC não possui os perks base '2H Handle'.");
+        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        return;
+    }
 
-    // Scan inventory for suitable weapons
+    logger::info("  - Status Perks: Base 2H Handle: {}. Dual 2H: {}.", hasBase2HPerks, hasDual2HPerks);
+
+    // 4. Escanear inventário para itens NÃO EQUIPADOS
     logger::info("  - Escaneando inventário...");
-    std::vector<RE::TESObjectWEAP*> suitableWeapons;
-    auto inventory = npc->GetInventory();  // GetInventory returns std::map<TESBoundObject*, std::pair<std::int32_t,
-                                           // std::unique_ptr<InventoryEntryData>>>
+    std::vector<RE::TESObjectWEAP*> twoHandedWeapons;
+    std::vector<RE::TESObjectWEAP*> oneHandedWeapons;
+    std::vector<RE::TESObjectARMO*> shields;
+    std::vector<RE::SpellItem*> spells;
 
+    RE::TESObjectWEAP* r_weap = equippedItemR ? equippedItemR->As<RE::TESObjectWEAP>() : nullptr;
+    RE::TESObjectWEAP* l_weap = equippedItemL ? equippedItemL->As<RE::TESObjectWEAP>() : nullptr;
+    RE::TESObjectARMO* l_armo = equippedItemL ? equippedItemL->As<RE::TESObjectARMO>() : nullptr;
+
+    auto inventory = npc->GetInventory();
     for (const auto& [item, data] : inventory) {
-        // Check if the item is a weapon and is two-handed
-        if (item && item->IsWeapon() && isTwoHanded(item)) {
-            // Check quantity - must have at least one not equipped (or total >= 2 if checking equipped separately)
-            if (data.first > 0) {  // data.first is the count
-                auto weaponPtr = item->As<RE::TESObjectWEAP>();
-                // Avoid adding already equipped weapons if they are the ones equipped
-                if (weaponPtr != leftWeapon && weaponPtr != rightWeapon) {
-                    suitableWeapons.push_back(weaponPtr);
-                } else if (data.first >= 2) {  // Allow if equipped but has more than one
-                    suitableWeapons.push_back(weaponPtr);
-                }
-            }
+        int count = data.first;
+        if (count <= 0) continue;
+
+        if (isTwoHanded(item)) {
+            auto weap = item->As<RE::TESObjectWEAP>();
+            if (weap == r_weap) count--;                                       // Um já está equipado R
+            if (weap == l_weap) count--;                                       // Um já está equipado L
+            for (int i = 0; i < count; i++) twoHandedWeapons.push_back(weap);  // Adiciona cópias restantes
+        } else if (isOneHanded(item)) {
+            auto weap = item->As<RE::TESObjectWEAP>();
+            if (weap == r_weap) count--;
+            if (weap == l_weap) count--;
+            for (int i = 0; i < count; i++) oneHandedWeapons.push_back(weap);
+        } else if (isShield(item)) {
+            auto armo = item->As<RE::TESObjectARMO>();
+            if (armo == l_armo) count--;
+            for (int i = 0; i < count; i++) shields.push_back(armo);
         }
     }
 
-    logger::info("   - Inventory Scan: Found {} suitable two-handed weapons.", suitableWeapons.size());
 
-    // 4. Ação Final
-    if (suitableWeapons.size() >= 2) {
-        logger::info("  - Check PASSED: Found at least 2 weapons. Proceeding to equip.");
+    logger::info("   - Inventário (disponível): {} 2H, {} 1H, {} Escudos, {} Magias.", twoHandedWeapons.size(),
+                 oneHandedWeapons.size(), shields.size(), spells.size());
 
-        auto weapon1 = suitableWeapons[0];
-        auto weapon2 = suitableWeapons[1];
+    // Função auxiliar para equipar o melhor item de fallback na mão esquerda
+    auto equipLeftHandFallback = [&](RE::Actor* actor) {
+        if (!oneHandedWeapons.empty()) {
+            logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback 1H).", oneHandedWeapons[0]->GetName());
+            EquipItemWithGripChange(actor, oneHandedWeapons[0], Hooks::g_leftHandSlot);
+        } else if (!shields.empty()) {
+            logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback Escudo).", shields[0]->GetName());
+            EquipItemWithGripChange(actor, shields[0], Hooks::g_leftHandSlot);
+        } else {
+            logger::info("  -> Nenhuma opção de fallback para a Mão Esquerda. Deixando vazia.");
+        }
+    };
 
-        logger::info("  -> Equipping '{}' in Right Hand and '{}' in Left Hand.", weapon1->GetName(),
-                     weapon2->GetName());
-
-        // --- CORREÇÃO APLICADA ---
-        // Chame a nova função centralizada em vez de duas chamadas separadas
-        EquipItemWithGripChange(npc, weapon1, Hooks::g_rightHandSlot);
-        EquipItemWithGripChange(npc, weapon2, Hooks::g_leftHandSlot);
-        npc->SetGraphVariableInt("CycleMovesetNpcType", 1);  
-
+    // 5. Árvore de Decisão Principal
+    if (isR_2H) {
+        // Caso A: NPC já tem uma 2H na mão direita. Só precisamos gerenciar a mão esquerda.
+        logger::info("  - Ação: NPC já tem 2H na mão direita. Gerenciando mão esquerda...");
+        if (hasDual2HPerks) {
+            if (!twoHandedWeapons.empty()) {
+                // Tenta equipar uma segunda arma 2H
+                logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", twoHandedWeapons[0]->GetName());
+                EquipItemWithGripChange(npc, twoHandedWeapons[0], Hooks::g_leftHandSlot);
+            } else {
+                // Fallback para Dual 2H (não há outra 2H)
+                logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
+                equipLeftHandFallback(npc);
+            }
+        } else {
+            // Tem perks base, mas não dual.
+            logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
+            equipLeftHandFallback(npc);
+        }
     } else {
-        logger::info("  - Check FAILED: Not enough suitable weapons in inventory.");
+        // Caso B: NPC NÃO tem uma 2H na mão direita, mas deveria.
+        logger::info("  - Ação: NPC não tem 2H na mão direita. Tentando equipar...");
+
+        // Encontra a primeira 2H disponível no inventário
+        RE::TESObjectWEAP* rightWeaponToEquip = nullptr;
+        if (!twoHandedWeapons.empty()) {
+            rightWeaponToEquip = twoHandedWeapons[0];
+        } else if (isTwoHanded(r_weap)) {
+            // Caso especial: a arma 2H já estava equipada, mas não no slot 'RightHand'
+            // (Isso não deveria acontecer por causa do check 'is2H_2H', mas é uma segurança)
+            rightWeaponToEquip = r_weap;
+        }
+
+        if (!rightWeaponToEquip) {
+            logger::warn("  - Falha na Ação: NPC tem perks '2H Handle' mas não há armas 2H no inventário.");
+            logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+            return;
+        }
+
+        // Equipa a arma 2H na mão direita
+        logger::info("  -> Equipando '{}' na Mão Direita.", rightWeaponToEquip->GetName());
+        EquipItemWithGripChange(npc, rightWeaponToEquip, Hooks::g_rightHandSlot);
+
+        // Agora, gerencia a mão esquerda com base nos perks
+        if (hasDual2HPerks) {
+            RE::TESObjectWEAP* leftWeaponToEquip = nullptr;
+            // Tenta encontrar uma *segunda* arma 2H
+            if (twoHandedWeapons.size() > 1) {
+                // Se a arma que equipamos na direita veio do inventário (não estava equipada),
+                // twoHandedWeapons[1] é uma segunda arma válida.
+                if (rightWeaponToEquip == twoHandedWeapons[0]) {
+                    leftWeaponToEquip = twoHandedWeapons[1];
+                }
+            } else if (twoHandedWeapons.size() == 1 && rightWeaponToEquip != twoHandedWeapons[0]) {
+                // Se equipamos uma arma que já estava equipada (r_weap), a arma em twoHandedWeapons[0]
+                // é uma segunda arma válida.
+                leftWeaponToEquip = twoHandedWeapons[0];
+            }
+
+            if (leftWeaponToEquip) {
+                // Encontrou uma segunda arma 2H
+                logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", leftWeaponToEquip->GetName());
+                EquipItemWithGripChange(npc, leftWeaponToEquip, Hooks::g_leftHandSlot);
+            } else {
+                // Fallback para Dual 2H
+                logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
+                equipLeftHandFallback(npc);
+            }
+        } else {
+            // Tem perks base, mas não dual.
+            logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
+            equipLeftHandFallback(npc);
+        }
     }
+
+    logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
 }
 
 // Esta função é chamada a cada frame de input
@@ -1592,27 +1701,45 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
 RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
     const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) {
     auto player = RE::PlayerCharacter::GetSingleton();
-     // --- LOG DE DIAGNÓSTICO ---
-    // Apenas loga se o timer deveria estar rodando, para não poluir o log 100% do tempo
     if (g_comboState.isTimerRunning) {
         auto now = std::chrono::steady_clock::now();
         auto time_left_ms = std::chrono::duration_cast<std::chrono::milliseconds>(g_comboState.comboTimeoutTimestamp - now).count();
         //SKSE::log::info("[UpdateHandler] Checando timer... g_comboState.isTimerRunning: {}. Tempo restante: {} ms", g_comboState.isTimerRunning,time_left_ms);
-    }
-    
+    } 
+    if (g_comboState.isTimerRunning && std::chrono::steady_clock::now() >= g_comboState.comboTimeoutTimestamp) {
+        g_comboState.isTimerRunning = false;
+
+        if (Settings::CycleMoveset) {
+            SKSE::GetTaskInterface()->AddTask([]() { TriggerSmartRandomNumber("Fim de Combo (C++)"); });
+        }
+    } else if (g_hitComboState.isTimerRunning &&
+               std::chrono::steady_clock::now() >= g_hitComboState.comboTimeoutTimestamp) {
+        g_hitComboState.isTimerRunning = false;
+
+        // Se o timer expirar, o combo de acertos é zerado.
+        if (GlobalControl::g_currentHitCount > 0) {
+            SKSE::log::info("Hit combo timer expired. Resetting hit count from {} to 0.",
+                            GlobalControl::g_currentHitCount);
+            GlobalControl::g_currentHitCount = 0;
+            player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
+            AnimationManager::GetSingleton()->OnHit(player, 0);
+        }
+      }
 
     if (a_event && a_event->holder && a_event->holder->IsPlayerRef()) {
         const std::string_view eventName = a_event->tag;
-        if (g_comboState.isTimerRunning && std::chrono::steady_clock::now() >= g_comboState.comboTimeoutTimestamp) {
-            g_comboState.isTimerRunning = false;
-
-
-            if (Settings::CycleMoveset) {
-                SKSE::GetTaskInterface()->AddTask([]() { TriggerSmartRandomNumber("Fim de Combo (C++)"); });
-            }
-        }
-        else if(eventName == "weaponSwing" || eventName == "weaponLeftSwing" ||
+        
+        if(eventName == "weaponSwing" || eventName == "weaponLeftSwing" ||
             eventName == "h2hAttack" || eventName == "PowerAttack_Start_end") {
+
+            if (!g_hitComboState.isTimerRunning && GlobalControl::g_currentHitCount > 0) {
+                SKSE::log::info("New swing starting after combo expired. Resetting hit count from {} to 0.",
+                                GlobalControl::g_currentHitCount);
+                GlobalControl::g_currentHitCount = 0;
+                player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
+                AnimationManager::GetSingleton()->OnHit(player, 0);
+            }
+
             g_comboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::CycleTimer * 1000));
             g_comboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
@@ -2300,4 +2427,323 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
     }
 
     return result;
+}
+
+RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
+    const RE::TESHitEvent* a_event, RE::BSTEventSource<RE::TESHitEvent>* a_source) {
+    auto player = RE::PlayerCharacter::GetSingleton();
+    if (!a_event || !a_event->cause || !a_event->target || a_event->source == 0) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // 2. Checar se o causador é o jogador
+    if (!a_event->cause->IsPlayerRef()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // 3. Checar se o alvo é um NPC válido
+    auto* targetNPC = a_event->target.get()->As<RE::Actor>();
+    if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // 4. Checar se o NPC é hostil
+    if (targetNPC->IsHostileToActor(RE::PlayerCharacter::GetSingleton())) {
+        // 5. Checar se a fonte do dano é uma arma (e não um feitiço, soco, etc. a menos que queira)
+        auto* weaponForm = RE::TESForm::LookupByID(a_event->source);
+        if (weaponForm && weaponForm->IsWeapon()) {
+
+            GlobalControl::g_currentHitCount++;
+            player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
+            SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
+            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount);
+            // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
+            g_hitComboState.isTimerRunning = true;
+            auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
+            g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
+        }
+    }
+
+    return RE::BSEventNotifyControl::kContinue;
+}
+
+void AnimationManager::OnHit(RE::Actor* actor, int hitCount) {
+    if (!actor || !actor->IsPlayerRef()) {
+        return;
+    }
+
+    SKSE::log::info("[OnHit] Verificando contagem de acertos {} para o ator {}", hitCount, actor->GetName());
+
+    // 1. Obter Stance, Moveset, e Sub-Moveset atuais
+    std::string categoryName = GetCurrentWeaponCategoryName();
+    auto cat_it = _categories.find(categoryName);
+    if (cat_it == _categories.end()) {
+        // Sem categoria, aplica lista vazia (limpa efeitos)
+        ApplyHitEffects(actor, {});
+        return;
+    }
+
+    const auto availableStances = GetAvailableStances(actor, categoryName);
+    int originalStanceIndex = 0;
+    if (GlobalControl::g_currentStance > 0 && GlobalControl::g_currentStance <= availableStances.size()) {
+        originalStanceIndex = availableStances[GlobalControl::g_currentStance - 1].originalIndex;
+    } else {
+        // Sem stance válida, limpa efeitos
+        ApplyHitEffects(actor, {});
+        return;
+    }
+
+    const auto availableMovesets = GetAvailableMovesets(actor, categoryName, originalStanceIndex);
+    if (GlobalControl::g_currentMoveset <= 0 || GlobalControl::g_currentMoveset > availableMovesets.size()) {
+        // Sem moveset válido, limpa efeitos
+        ApplyHitEffects(actor, {});
+        return;
+    }
+    int originalParentMovesetIndex = availableMovesets[GlobalControl::g_currentMoveset - 1].originalIndex;
+
+    // 2. Encontrar Stance, ModInstance (Pai), SubAnimationInstance (Pai)
+    const WeaponCategory& category = cat_it->second;
+    if (originalStanceIndex <= 0 || originalStanceIndex > category.instances.size()) {
+        ApplyHitEffects(actor, {});
+        return;
+    }
+    const CategoryInstance& stanceInstance = category.instances[originalStanceIndex - 1];
+
+    const ModInstance* parentModInst = nullptr;
+    const SubAnimationInstance* parentSubInst = nullptr;
+    int parentCounter = 0;
+    auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);
+    for (const auto& modInst : mutableStanceInstance.modInstances) {
+        if (!modInst.isSelected) continue;
+        for (const auto& subInst : modInst.subAnimationInstances) {
+            bool isParent =
+                !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight || subInst.pFrontRight ||
+                  subInst.pFrontLeft || subInst.pBackRight || subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
+            if (!subInst.isSelected || !isParent) continue;
+            parentCounter++;
+            if (parentCounter == originalParentMovesetIndex) {
+                parentModInst = &modInst;
+                parentSubInst = &subInst;
+                goto found_parent_instances_onhit;
+            }
+        }
+    }
+found_parent_instances_onhit:;
+
+    if (!parentModInst || !parentSubInst) {
+        SKSE::log::error("[OnHit] Não foi possível encontrar Mod/Sub-instâncias pai para o índice {}",
+                         originalParentMovesetIndex);
+        ApplyHitEffects(actor, {});
+        return;
+    }
+
+    // ====================== INÍCIO DA MODIFICAÇÃO ======================
+
+    // 3. Determinar o Sub-moveset Efetivo (Pai ou Filho Direcional)
+    const SubAnimationInstance* effectiveSubInst = parentSubInst;  // Começa com o pai como padrão
+
+    // Pega o estado direcional ATUAL
+    int directionalState = GlobalControl::InputListener::GetDirectionalState();
+
+    if (directionalState > 0) {  // Se há uma direção
+        // Procura o filho correspondente DENTRO do parentModInst
+        for (const auto& childSubInst : parentModInst->subAnimationInstances) {
+            if (!childSubInst.isSelected) continue;
+            bool isDirectionalMatch =
+                (directionalState == 1 && childSubInst.pFront) || (directionalState == 2 && childSubInst.pFrontRight) ||
+                (directionalState == 3 && childSubInst.pRight) || (directionalState == 4 && childSubInst.pBackRight) ||
+                (directionalState == 5 && childSubInst.pBack) || (directionalState == 6 && childSubInst.pBackLeft) ||
+                (directionalState == 7 && childSubInst.pLeft) || (directionalState == 8 && childSubInst.pFrontLeft);
+
+            if (isDirectionalMatch) {
+                if (NCheckActorHasPerks(actor, childSubInst.perkList)) {
+                    effectiveSubInst = &childSubInst;  // Encontrou filho válido
+                    SKSE::log::info("[OnHit] Usando regras de Hit Count do filho direcional (Estado {}).",
+                                    directionalState);
+                    break;
+                } else {
+                    SKSE::log::info(
+                        "[OnHit] Filho direcional {} encontrado, mas jogador não tem perks. Usando regras do pai.",
+                        directionalState);
+                    // effectiveSubInst continua sendo o pai
+                    break;  // Para de procurar filhos para esta direção
+                }
+            }
+        }
+    } else {
+        SKSE::log::info("[OnHit] Sem direção. Usando regras de Hit Count do pai.");
+    }
+
+    // 4. Coletar TODAS as HitCountRules da hierarquia (Usando effectiveSubInst)
+    std::vector<HitCountRule> allRules;
+    allRules.insert(allRules.end(), stanceInstance.hitRules.begin(), stanceInstance.hitRules.end());
+    allRules.insert(allRules.end(), parentModInst->hitRules.begin(), parentModInst->hitRules.end());
+    allRules.insert(allRules.end(), effectiveSubInst->hitRules.begin(),
+                    effectiveSubInst->hitRules.end());  // <-- USA O EFETIVO
+
+    // ====================== FIM DA MODIFICAÇÃO ======================
+
+    // 5. Ordena por hitCount (necessário para a lógica de "melhor camada")
+    std::sort(allRules.begin(), allRules.end());
+
+    // 6. Encontrar a "camada" mais alta de regras válidas e mesclar seus efeitos
+    int highestValidHitCount = -1;              // Rastreia a "camada" mais alta (ex: 5-hits, 12-hits)
+    std::vector<AppliedEffect> effectsToApply;  // Lista final de efeitos mesclados
+
+    for (const auto& rule : allRules) {
+        // A regra é alcançável? (ex: acerto 5, regra 5)
+        if (hitCount >= rule.hitCount) {
+            // O ator cumpre os requisitos de perks?
+            if (NCheckActorHasPerks(actor, rule.perks)) {
+                // Esta regra é válida.
+                if (rule.hitCount > highestValidHitCount) {
+                    // Esta é uma nova camada (ex: encontramos uma regra de 12 hits, a anterior era de 5)
+                    highestValidHitCount = rule.hitCount;
+                    effectsToApply.clear();  // Descarta todos os efeitos da camada anterior (ex: 5-hit)
+                    effectsToApply.insert(effectsToApply.end(), rule.effects.begin(), rule.effects.end());
+                } else if (rule.hitCount == highestValidHitCount) {
+                    // Esta regra é da MESMA camada (ex: outra regra de 12 hits da Stance)
+                    // Nós mesclamos (anexamos) os efeitos.
+                    effectsToApply.insert(effectsToApply.end(), rule.effects.begin(), rule.effects.end());
+                }
+                // Se rule.hitCount < highestValidHitCount, ignoramos (é de uma camada inferior).
+            }
+        } else {
+            // A lista está ordenada. Se hitCount (ex: 4) for menor que rule.hitCount (ex: 5),
+            // podemos parar de procurar.
+            break;
+        }
+    }
+
+    // 7. Aplicar os efeitos mesclados (ou limpar se nenhum foi encontrado)
+    if (highestValidHitCount != -1) {
+        // Encontramos pelo menos uma regra válida.
+        // Remove duplicatas da lista *final* de efeitos mesclados.
+        std::sort(effectsToApply.begin(), effectsToApply.end());
+        effectsToApply.erase(std::unique(effectsToApply.begin(), effectsToApply.end()), effectsToApply.end());
+
+        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados da camada de HitCount {}", effectsToApply.size(),
+                        highestValidHitCount);
+        ApplyHitEffects(actor, effectsToApply);
+    } else {
+        // Nenhuma regra válida foi encontrada (ex: contagem de acertos é 1, mas a primeira regra é 5)
+        // Aplica uma lista vazia, o que limpará quaisquer efeitos de acerto anteriores.
+        SKSE::log::info("[OnHit] Nenhuma HitRule válida encontrada para {} acertos. Limpando efeitos.", hitCount);
+        ApplyHitEffects(actor, {});
+    }
+}
+
+// Esta é a função "burra" que aplica/remove os efeitos de forma stateful.
+// É uma cópia de ApplyAndTrackEffects, mas usa a variável de membro _lastAppliedHitEffects.
+void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst) {
+    if (!actor) return;
+    if (!actor->IsPlayerRef()) return;  // Só se aplica ao jogador por enquanto
+
+    // Usamos cópias para poder ordenar
+    std::vector<AppliedEffect> newEffects = newEffectsConst;
+    // Usa a nova variável de membro para rastreamento
+    std::vector<AppliedEffect> oldEffects = _lastAppliedHitEffects;
+
+    std::sort(newEffects.begin(), newEffects.end());
+    std::sort(oldEffects.begin(), oldEffects.end());
+
+    // 1. Encontra efeitos para REMOVER
+    std::vector<AppliedEffect> toRemove;
+    std::set_difference(oldEffects.begin(), oldEffects.end(), newEffects.begin(), newEffects.end(),
+                        std::back_inserter(toRemove));
+
+    for (const auto& effect : toRemove) {
+        RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
+        if (!form) {
+            SKSE::log::warn("[ApplyHitEffects] FormID {:08X} não encontrado para remoção.", effect.formID);
+            continue;
+        }
+
+        switch (effect.type) {
+            case AppliedEffect::EffectType::Perk:
+                if (auto perk = form->As<RE::BGSPerk>()) {
+                    if (actor->HasPerk(perk)) {
+                        SKSE::log::info("[ApplyHitEffects] Removendo Perk: {}", perk->GetName());
+                        actor->RemovePerk(perk);
+                    }
+                }
+                break;
+            case AppliedEffect::EffectType::Spell: {
+                RE::SpellItem* spellToRemove = form->As<RE::SpellItem>();
+                if (auto activeEffectList = actor->AsMagicTarget()->GetActiveEffectList()) {
+                    auto it = activeEffectList->begin();
+                    while (it != activeEffectList->end()) {
+                        RE::ActiveEffect* activeEffect = *it;
+                        auto nextIt = std::next(it);
+                        if (activeEffect) {
+                            RE::MagicItem* sourceMagicItem = activeEffect->spell;
+                            if (spellToRemove && sourceMagicItem == spellToRemove) {
+                                SKSE::log::info("[ApplyHitEffects] Dispelando efeito de {}: {}",
+                                                spellToRemove->GetName(),
+                                                activeEffect->GetBaseObject() ? activeEffect->GetBaseObject()->GetName()
+                                                                              : "Nome Inválido");
+                                activeEffect->Dispel(true);
+                            }
+                        }
+                        it = nextIt;
+                    }
+                }
+                if (spellToRemove && actor->HasSpell(spellToRemove)) {
+                    SKSE::log::info("[ApplyHitEffects] Removendo Spell/Ability: {}", spellToRemove->GetName());
+                    actor->RemoveSpell(spellToRemove);
+                }
+            } break;
+            case AppliedEffect::EffectType::MagicEffect:
+                // MagicEffects são (geralmente) removidos pelo Dispel de seu Spell pai.
+                break;
+        }
+    }
+
+    // 2. Encontra efeitos para ADICIONAR
+    std::vector<AppliedEffect> toAdd;
+    std::set_difference(newEffects.begin(), newEffects.end(), oldEffects.begin(), oldEffects.end(),
+                        std::back_inserter(toAdd));
+
+    for (const auto& effect : toAdd) {
+        RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
+        if (!form) {
+            SKSE::log::warn("[ApplyHitEffects] FormID {:08X} não encontrado para adição.", effect.formID);
+            continue;
+        }
+
+        switch (effect.type) {
+            case AppliedEffect::EffectType::Perk:
+                if (auto perk = form->As<RE::BGSPerk>()) {
+                    if (!actor->HasPerk(perk)) {
+                        SKSE::log::info("[ApplyHitEffects] Adicionando Perk: {}", perk->GetName());
+                        actor->AddPerk(perk, 1);
+                    }
+                }
+                break;
+            case AppliedEffect::EffectType::Spell:
+                if (auto spell = form->As<RE::SpellItem>()) {
+                    if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
+                        spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
+                        if (!actor->HasSpell(spell)) {
+                            SKSE::log::info("[ApplyHitEffects] Adicionando Ability/Power: {}", spell->GetName());
+                            actor->AddSpell(spell);
+                        }
+                    } else {
+                        SKSE::log::info("[ApplyHitEffects] Castando Spell: {}", spell->GetName());
+                        if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                            caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                        }
+                    }
+                }
+                break;
+            case AppliedEffect::EffectType::MagicEffect:
+                SKSE::log::warn(
+                    "[ApplyHitEffects] Não é possível adicionar diretamente um MagicEffect ({}). Adicione o Spell pai.",
+                    form->GetName());
+                break;
+        }
+    }
+
+    // 3. Atualiza a lista de rastreamento
+    _lastAppliedHitEffects = newEffectsConst;  // Armazena a lista original, não ordenada
 }

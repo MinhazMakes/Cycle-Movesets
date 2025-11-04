@@ -30,6 +30,7 @@ namespace Settings {
 
     inline bool CycleMoveset = true;
     inline float CycleTimer = 1.2f;
+    inline float HitTimer = 5.0f;
     inline bool RandomCycle = false;
     inline bool ShowMenu = true;
     inline std::string SelectedLanguage = "English";

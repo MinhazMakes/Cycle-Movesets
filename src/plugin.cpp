@@ -75,7 +75,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         }
         GlobalControl::Dynamicgrip = SkyPromptAPI::RequestClientID();
         if (GlobalControl::Dynamicgrip > 0) {
-            SKSE::log::info("ClientID {} recebido da SkyPromptAPI.", GlobalControl::MenuShowing);
+            SKSE::log::info("ClientID {} recebido da SkyPromptAPI.", GlobalControl::Dynamicgrip);
             if (!SkyPromptAPI::RequestTheme(GlobalControl::MenuShowing, "Cycle Movesets")) {
 			    logger::error("Falha ao solicitar o tema 'Cycle Movesets' na SkyPromptAPI.");
             }
@@ -111,8 +111,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kNewGame || message->type == SKSE::MessagingInterface::kPostLoadGame) {
         WheelerKeys();
         // 2. Requisitar um ClientID da API SkyPrompt
-        auto* inputDeviceManager = RE::BSInputDeviceManager::GetSingleton();
-        if (inputDeviceManager) {
+
+        if (auto* inputDeviceManager = RE::BSInputDeviceManager::GetSingleton()) {
             inputDeviceManager->AddEventSink(GlobalControl::InputListener::GetSingleton());
             SKSE::log::info("Listener de input registrado com sucesso!");
         }
@@ -135,6 +135,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             logger::info("Adding event sink for dialogue menu auto zoom.");
             ui->AddEventSink<RE::MenuOpenCloseEvent>(GlobalControl::MenuOpen::GetSingleton());
         }
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(GlobalControl::HitEventHandler::GetSingleton());
 
         GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants();
 

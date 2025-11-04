@@ -31,10 +31,12 @@ namespace GlobalControl {
         }
     };
 
+
     inline bool g_isPlayerInCombat = false;
     inline int g_currentStance = 0;
     inline int g_currentMoveset = 0;
     extern int g_directionalState; 
+    inline int g_currentHitCount = 0;
     inline std::vector<AppliedEffect> g_lastAppliedStanceEffects;
     inline std::vector<AppliedEffect> g_lastAppliedMovesetEffects;
     void ApplyAndTrackEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst,
@@ -268,6 +270,7 @@ namespace GlobalControl {
         int previousMoveset = 0;
     };
     inline ComboState g_comboState;  // Instância global única
+    inline ComboState g_hitComboState;
     struct NpcComboState {
         bool isTimerRunning = false;
         std::chrono::steady_clock::time_point comboTimeoutTimestamp;
@@ -366,6 +369,16 @@ namespace GlobalControl {
         static inline REL::Relocation<decltype(thunk)> func;
     };
 
+    class HitEventHandler : public RE::BSTEventSink<RE::TESHitEvent> {
+    public:
+        static HitEventHandler* GetSingleton() {
+            static HitEventHandler singleton;
+            return &singleton;
+        }
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* a_event,
+                                              RE::BSTEventSource<RE::TESHitEvent>* a_source) override;
+    };
+
     class InputListener : public RE::BSTEventSink<RE::InputEvent*> {
     public:
     // Singleton para garantir que exista apenas uma instância
@@ -373,12 +386,16 @@ namespace GlobalControl {
         static InputListener singleton;
         return &singleton;
     }
+
+    
+
     static inline RE::INPUT_DEVICE lastUsedDevice = RE::INPUT_DEVICE::kKeyboard;
     // A função que processa os eventos de input do jogo
     virtual RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_event,
                                                   RE::BSTEventSource<RE::InputEvent*>* a_eventSource) override;
     static int GetDirectionalState() { return directionalState; };
     
+
 
 protected:
 
@@ -398,6 +415,7 @@ private:
     bool c_down = false;
     bool c_right = false;
 };
+
 
 }
 

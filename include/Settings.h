@@ -99,6 +99,15 @@ struct PerkDef {
     bool operator==(const RE::FormID& otherFormID) const { return formID == otherFormID; }
 };
 
+struct HitCountRule {
+    int hitCount = 0;
+    std::vector<PerkDef> perks;
+    std::vector<AppliedEffect> effects;
+
+    // Operador para ordenação (útil para a UI)
+    bool operator<(const HitCountRule& other) const { return hitCount < other.hitCount; }
+};
+
 // --- Estruturas de Configuração do Usuário ---
 struct SubAnimationInstance {
     // --- ALTERADO: Usamos nomes para salvar/carregar. Os índices serão preenchidos em tempo de execução. ---
@@ -122,6 +131,7 @@ struct SubAnimationInstance {
     bool hasCPA = false;
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
+    std::vector<HitCountRule> hitRules;
 };
 
 struct ModInstance {
@@ -135,12 +145,14 @@ struct ModInstance {
     int order = 0;
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
+    std::vector<HitCountRule> hitRules;
 };
 
 struct CategoryInstance {
     std::vector<ModInstance> modInstances;
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
+    std::vector<HitCountRule> hitRules;
 };
 
 struct WeaponCategory {
@@ -162,6 +174,7 @@ struct WeaponCategory {
     bool isCustom = false;
     std::string baseCategoryName;
     bool ownerIsPlayer;
+    int uiTabVersion = 0;
 };
 
 struct UserMoveset {
