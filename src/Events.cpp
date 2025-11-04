@@ -78,6 +78,10 @@ namespace MyMenu {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(LOC("tooltip_cycle_timer"));
                 }
+                if (ImGui::SliderFloat("Combo Timer", &Settings::HitTimer, 1.5f, 20.0f, "%.1f s")) {
+                    settings_changed = true;
+                }
+                
                 ImGui::Spacing();
                 ImGui::SetNextItemWidth(200.0f);
                 
@@ -276,6 +280,7 @@ namespace MyMenu {
         doc.AddMember("CycleMoveset", Settings::CycleMoveset, allocator);
         doc.AddMember("RandomCycle", Settings::RandomCycle, allocator);
         doc.AddMember("CycleTimer", Settings::CycleTimer, allocator);
+        doc.AddMember("HitTimer", Settings::HitTimer, allocator);
         doc.AddMember("ShowMenu", Settings::ShowMenu, allocator);
         doc.AddMember("OnlyCombat", Settings::OnlyCombat, allocator);
         doc.AddMember("BfcoDPA", Settings::bfcoDirectionalAttacks, allocator);
@@ -377,6 +382,9 @@ namespace MyMenu {
         }
         if (doc.HasMember("CycleTimer") && doc["CycleTimer"].IsFloat()) {
             Settings::CycleTimer = doc["CycleTimer"].GetFloat();
+        }
+        if (doc.HasMember("HitTimer") && doc["HitTimer"].IsFloat()) {
+            Settings::HitTimer = doc["HitTimer"].GetFloat();
         }
         if (doc.HasMember("ShowMenu") && doc["ShowMenu"].IsBool()) {
             Settings::ShowMenu = doc["ShowMenu"].GetBool();

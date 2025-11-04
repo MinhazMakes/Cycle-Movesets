@@ -1441,29 +1441,51 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
                         SKSE::log::info("Tentando castar Spell imediatamente: {} ({:08X})", spell->GetName(),
                                         spell->GetFormID());
 
-                        // --- CORREÇÃO: Usar CastSpellImmediate ---
-                        // Obtem o caster apropriado (kInstant geralmente funciona bem para isso)
                         if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
                             // Verifica se o ator pode castar (ainda é uma boa prática)
                             RE::MagicSystem::CannotCastReason reason =
                                 RE::MagicSystem::CannotCastReason::kOK;  // Inicializa com OK
                             // Nota: CheckCast pode não ser perfeito para CastSpellImmediate,
                             // mas é uma verificação básica de magicka/silence.
-                            if (actor->CheckCast(spell, false, &reason)) {
+                            if (Settings::MGKRequeriment) {
+                                if (actor->CheckCast(spell, false, &reason)) {
+                                    auto magicItem = form->As<RE::MagicItem>();
 
-                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
-                                SKSE::log::info("CastSpellImmediate chamado para {}", spell->GetName());
+                                    // Verificação de segurança: magicItem não deve ser nulo se spell também não era.
+                                    if (!magicItem) {
+                                        SKSE::log::error(
+                                            "Falha ao converter Form para MagicItem, embora seja um SpellItem!");
+                                        return;
+                                    }
 
+                                    float magickaCost = magicItem->CalculateMagickaCost(actor);
+
+                                    logger::info("[ApplyHitEffects] Custo de Magicka calculado para {}: {}",
+                                                 spell->GetName(), magickaCost);
+
+                                    if (magickaCost > 0.0f) {
+                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka,
+                                                                                     magickaCost);
+                                    }
+
+                                    caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                                    SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}",
+                                                    spell->GetName());
+
+                                } else {
+                                    SKSE::log::warn(
+                                        "Não foi possível castar {} via CastSpellImmediate. Razão CheckCast: {}",
+                                        spell->GetName(), static_cast<int>(reason));
+                                }
                             } else {
-                                SKSE::log::warn(
-                                    "Não foi possível castar {} via CastSpellImmediate. Razão CheckCast: {}",
-                                    spell->GetName(), static_cast<int>(reason));
+                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
                             }
+
                         } else {
                             SKSE::log::error("Não foi possível obter MagicCaster para CastSpellImmediate de {}",
                                              spell->GetName());
                         }
-                        // --- FIM DA CORREÇÃO ---
+                        
                     }
                 } else {
                     SKSE::log::warn("FormID {:08X} (Plugin: {}) não é um SpellItem válido para adição/cast.",
@@ -2537,7 +2559,7 @@ found_parent_instances_onhit:;
         return;
     }
 
-    // ====================== INÍCIO DA MODIFICAÇÃO ======================
+
 
     // 3. Determinar o Sub-moveset Efetivo (Pai ou Filho Direcional)
     const SubAnimationInstance* effectiveSubInst = parentSubInst;  // Começa com o pai como padrão
@@ -2581,7 +2603,6 @@ found_parent_instances_onhit:;
     allRules.insert(allRules.end(), effectiveSubInst->hitRules.begin(),
                     effectiveSubInst->hitRules.end());  // <-- USA O EFETIVO
 
-    // ====================== FIM DA MODIFICAÇÃO ======================
 
     // 5. Ordena por hitCount (necessário para a lógica de "melhor camada")
     std::sort(allRules.begin(), allRules.end());
@@ -2633,14 +2654,13 @@ found_parent_instances_onhit:;
     }
 }
 
-// Esta é a função "burra" que aplica/remove os efeitos de forma stateful.
-// É uma cópia de ApplyAndTrackEffects, mas usa a variável de membro _lastAppliedHitEffects.
-void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst) {
+
+void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsHit) {
     if (!actor) return;
     if (!actor->IsPlayerRef()) return;  // Só se aplica ao jogador por enquanto
 
     // Usamos cópias para poder ordenar
-    std::vector<AppliedEffect> newEffects = newEffectsConst;
+    std::vector<AppliedEffect> newEffects = newEffectsHit;
     // Usa a nova variável de membro para rastreamento
     std::vector<AppliedEffect> oldEffects = _lastAppliedHitEffects;
 
@@ -2694,7 +2714,6 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
                 }
             } break;
             case AppliedEffect::EffectType::MagicEffect:
-                // MagicEffects são (geralmente) removidos pelo Dispel de seu Spell pai.
                 break;
         }
     }
@@ -2729,10 +2748,57 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
                             actor->AddSpell(spell);
                         }
                     } else {
-                        SKSE::log::info("[ApplyHitEffects] Castando Spell: {}", spell->GetName());
+                        // --- INÍCIO DA MODIFICAÇÃO: Lógica copiada de ApplyAndTrackEffects ---
+                        SKSE::log::info("[ApplyHitEffects] Tentando castar Spell: {} ({:08X})", spell->GetName(),
+                                        spell->GetFormID());
+
                         if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
-                            caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                            // Inicializa a razão com OK
+                            RE::MagicSystem::CannotCastReason reason =
+                                RE::MagicSystem::CannotCastReason::kOK;  
+                            if (Settings::MGKRequeriment) {
+                                if (actor->CheckCast(spell, false, &reason)) {
+                                    auto magicItem = form->As<RE::MagicItem>();
+
+                                    // Verificação de segurança: magicItem não deve ser nulo se spell também não era.
+                                    if (!magicItem) {
+                                        SKSE::log::error(
+                                            "Falha ao converter Form para MagicItem, embora seja um SpellItem!");
+                                        return;  
+                                    }
+
+                                    float magickaCost = magicItem->CalculateMagickaCost(actor);
+
+                                    logger::info(
+                                        "[ApplyHitEffects] Custo de Magicka calculado para {}: {}",
+                                                 spell->GetName(), magickaCost);
+
+                                    if (magickaCost > 0.0f) {
+                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka,
+                                                                                     magickaCost);
+                                    }
+
+                                    caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                                    SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}",
+                                                    spell->GetName());
+
+                                } else {
+                                    // Se não puder, avisa no log
+                                    SKSE::log::warn("[ApplyHitEffects] Não foi possível castar {}. Razão CheckCast: {}",
+                                                    spell->GetName(), static_cast<int>(reason));
+                                }
+
+                            } else {
+                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                            }
+
+                           
+
+                        } else {
+                            SKSE::log::error("[ApplyHitEffects] Não foi possível obter MagicCaster para CastSpellImmediate de {}",
+                                             spell->GetName());
                         }
+                        // --- FIM DA MODIFICAÇÃO ---
                     }
                 }
                 break;
@@ -2745,5 +2811,5 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
     }
 
     // 3. Atualiza a lista de rastreamento
-    _lastAppliedHitEffects = newEffectsConst;  // Armazena a lista original, não ordenada
+    _lastAppliedHitEffects = newEffectsHit;  // Armazena a lista original, não ordenada
 }

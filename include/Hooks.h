@@ -46,6 +46,7 @@ namespace Settings {
     inline int menuVisibilityMode = 2;  // 0: Hidden, 1: Only in Combat, 2: When Weapon Draw
     inline bool bfcoDirectionalAttacks = true;
     inline bool EnableAllNPC = true;
+    inline bool MGKRequeriment = true;
 
 
 }
