@@ -97,6 +97,7 @@ private:
     std::vector<HitCountRule>* _hitRuleListOwner = nullptr;  // Ponteiro para o vetor (da stance/moveset) que estamos editando
     std::vector<HitCountRule> _inheritedHitRules;
     std::vector<AppliedEffect> _lastAppliedHitEffects;
+    bool _isCreatingPeriodicHitRule = false;
     
     
     std::map<std::string, WeaponCategory> _categories;

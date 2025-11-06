@@ -855,6 +855,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             ImGui::EndPopup();
         }
     }
+
     void CreatePerkListJsonFor2H(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
                                  const std::vector<PerkDef>& perkList) {
         if (perkList.empty()) return;
@@ -3405,6 +3406,7 @@ void CreateHitRulesJson(rapidjson::Document& doc, rapidjson::Value& targetObject
         // Reutiliza os helpers existentes para salvar as listas aninhadas
         CreatePerkListJsonFor2H(doc, ruleObj, "PerkList", rule.perks);
         CreateEffectListJson(doc, ruleObj, "AppliedEffects", rule.effects);
+        ruleObj.AddMember("isPeriodic", rule.isPeriodic, allocator);
 
         rulesArray.PushBack(ruleObj, allocator);
     }
@@ -3430,6 +3432,11 @@ void ParseHitRulesJson(const rapidjson::Value& sourceObject, const std::string& 
             ParsePerkListJsonFor2H(ruleObj, "PerkList", newRule.perks);
             // Nota: Usamos ParseEffectListJson (espera [type, plugin, formID, origin])
             ParseEffectListJson(ruleObj, "AppliedEffects", newRule.effects);
+            if (ruleObj.HasMember("isPeriodic") && ruleObj["isPeriodic"].IsBool()) {
+                newRule.isPeriodic = ruleObj["isPeriodic"].GetBool();
+            } else {
+                newRule.isPeriodic = false;  // Valor padrão se não for encontrado
+            }
 
             targetList.push_back(newRule);
         }
@@ -7225,7 +7232,6 @@ void AnimationManager::DrawConditionsEffectsPopup() {
         ImGui::OpenPopup("Conditions & Effects");
     }
 
-
     static std::vector<PerkDef> tempSelectedPerks;
     static std::vector<AppliedEffect> tempSelectedEffects;
 
@@ -7569,11 +7575,12 @@ void AnimationManager::DrawConditionsEffectsPopup() {
             }
             if (!isEditing2HConfig &&
                 !isEditingHitRule) {  // Não mostra esta aba se estiver editando 2H ou uma Hit Rule
-                if (ImGui::BeginTabItem("Hit Count")) {
-                    if (ImGui::Button("Create New Rule...")) {
+                if (ImGui::BeginTabItem("Combo Effects")) {
+                    if (ImGui::Button("Create New Rule")) {
                         _isConditionsEffectsPopupOpen = false;
                         if (_hitRuleListOwner) {                // Só abre se soubermos onde salvar
                             _hitCountRuleEditorHitNumber = 0;   // Reseta o buffer
+                            _isCreatingPeriodicHitRule = false;
                             _isHitCountNumberPopupOpen = true;  // Ativa o popup de número
                             _hitRuleToEdit = nullptr;           // Garante que estamos em modo de criação
                         } else {
@@ -7599,6 +7606,9 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                                  _inheritedHitRules.end());
 
                         for (const auto& rule : _inheritedHitRules) {
+                            if (rule.isPeriodic) {
+                                continue;
+                            }
                             ImGui::PushID(&rule);  // ID único para a regra herdada
                             ImGui::TableNextRow();
                             ImGui::BeginDisabled();  // Desabilita a linha inteira
@@ -7624,6 +7634,10 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         if (_hitRuleListOwner) {
                             for (auto it = _hitRuleListOwner->begin(); it != _hitRuleListOwner->end();) {
                                 auto& rule = *it;
+                                if (rule.isPeriodic) {
+                                    ++it;
+                                    continue;
+                                }
 
                                 bool isOverridden = false;
                                 for (const auto& inheritedRule : _inheritedHitRules) {
@@ -7638,10 +7652,10 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                                 ImGui::TableNextColumn();
                                 ImGui::Text("%d", rule.hitCount);
-                                if (isOverridden) {
-                                    ImGui::SameLine();
-                                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), " (Overrides)");
-                                }
+                                //if (isOverridden) {
+                                //    ImGui::SameLine();
+                                //    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), " (Overrides)");
+                                //}
 
                                 ImGui::TableNextColumn();
                                 ImGui::Text("Perks: %zu / Effects: %zu", rule.perks.size(), rule.effects.size());
@@ -7651,6 +7665,8 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                     _hitRuleToEdit = &rule;
                                     _perksToDisplayInPopup = rule.perks;
                                     _effectsToDisplayInPopup = rule.effects;
+                                    tempSelectedPerks = _perksToDisplayInPopup;
+                                    tempSelectedEffects = _effectsToDisplayInPopup;
                                     _inheritedPerkFormIDs.clear();
                                     _inheritedEffectFormIDs.clear();
                                     _inheritedHitRules.clear();
@@ -7674,7 +7690,109 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                     ImGui::EndTabItem();
                 }
+                if (ImGui::BeginTabItem("Hit Effects")) {
+                    ImGui::Text("Apply effects *every* X hits.");
+                    ImGui::Separator();
+
+                    if (ImGui::Button("Add Periodic Rule")) {
+                        _isConditionsEffectsPopupOpen = false;
+                        if (_hitRuleListOwner) {  // <-- ADICIONAR: Checagem de segurança
+                            _hitCountRuleEditorHitNumber = 0;
+                            _isCreatingPeriodicHitRule = true;  // <-- ADICIONAR: Define o tipo a ser criado
+                            _isHitCountNumberPopupOpen = true;
+                            _hitRuleToEdit = nullptr;
+                        } else {
+                            SKSE::log::error("[HitCountTab] _hitRuleListOwner é nulo. Não é possível criar regra.");
+                        }
+                    }
+
+                    ImGui::Separator();
+                    if (ImGui::BeginTable(
+                            "HitRulesTable_Periodic", 3,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                        ImGui::TableSetupColumn("Hit Count", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableSetupColumn("Conditions / Effects", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                        ImGui::TableHeadersRow();
+
+                        // 1. Renderizar Regras Herdadas
+                        for (const auto& rule : _inheritedHitRules) {
+                            // <-- CORREÇÃO: Filtra regras que não são deste tipo
+                            if (!rule.isPeriodic) {
+                                continue;
+                            }
+
+                            ImGui::PushID(&rule);
+                            ImGui::TableNextRow();
+                            ImGui::BeginDisabled();
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("Every %d", rule.hitCount);
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("Perks: %zu / Effects: %zu", rule.perks.size(), rule.effects.size());
+                            ImGui::SameLine();
+                            ImGui::TextDisabled(" (Inherited)");
+
+                            ImGui::TableNextColumn();
+                            ImGui::Button("Edit");
+                            ImGui::SameLine();
+                            ImGui::Button("Delete");
+
+                            ImGui::EndDisabled();
+                            ImGui::PopID();
+                        }
+
+                        // 2. Renderizar Regras Próprias
+                        if (_hitRuleListOwner) {
+                            for (auto it = _hitRuleListOwner->begin(); it != _hitRuleListOwner->end();) {
+                                auto& rule = *it;
+
+                                // <-- CORREÇÃO: Filtra regras que não são deste tipo
+                                if (!rule.isPeriodic) {
+                                    ++it;
+                                    continue;
+                                }
+
+                                ImGui::PushID(&rule);
+                                ImGui::TableNextRow();
+
+                                ImGui::TableNextColumn();
+                                ImGui::Text("Every %d", rule.hitCount);
+
+                                ImGui::TableNextColumn();
+                                ImGui::Text("Perks: %zu / Effects: %zu", rule.perks.size(), rule.effects.size());
+
+                                ImGui::TableNextColumn();
+                                if (ImGui::Button("Edit")) {
+                                    _hitRuleToEdit = &rule;
+                                    _perksToDisplayInPopup = rule.perks;
+                                    _effectsToDisplayInPopup = rule.effects;
+                                    tempSelectedPerks = _perksToDisplayInPopup;
+                                    tempSelectedEffects = _effectsToDisplayInPopup;
+                                    _inheritedPerkFormIDs.clear();
+                                    _inheritedEffectFormIDs.clear();
+                                    _inheritedHitRules.clear();
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("Delete")) {
+                                    it = _hitRuleListOwner->erase(it);
+                                } else {
+                                    ++it;
+                                }
+
+                                ImGui::PopID();
+                            }
+                        }
+
+                        ImGui::EndTable();
+                    }
+                    // <-- FIM DA TABELA FALTANTE -->
+
+                    ImGui::EndTabItem();
+                }
             }
+            
             ImGui::EndTabBar();
         }
         if (ImGui::Button(LOC("save"), ImVec2(120, 0))) {
@@ -7793,7 +7911,8 @@ void AnimationManager::DrawHitCountNumberPopup() {
                     // Verifica se já existe uma regra com esse número
                     bool exists = false;
                     for (const auto& rule : *_hitRuleListOwner) {
-                        if (rule.hitCount == _hitCountRuleEditorHitNumber) {
+                        if (rule.hitCount == _hitCountRuleEditorHitNumber &&
+                            rule.isPeriodic == _isCreatingPeriodicHitRule) {
                             exists = true;
                             break;
                         }
@@ -7853,7 +7972,8 @@ void AnimationManager::DrawHitCountNumberPopup() {
                 // Verifica se já existe uma regra com esse número
                 bool exists = false;
                 for (const auto& rule : *_hitRuleListOwner) {
-                    if (rule.hitCount == _hitCountRuleEditorHitNumber) {
+                    if (rule.hitCount == _hitCountRuleEditorHitNumber &&
+                        rule.isPeriodic == _isCreatingPeriodicHitRule) {
                         exists = true;
                         break;
                     }
@@ -7867,7 +7987,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
 
                     HitCountRule newRule;
                     newRule.hitCount = _hitCountRuleEditorHitNumber;
-
+                    newRule.isPeriodic = _isCreatingPeriodicHitRule;
                     _hitRuleListOwner->push_back(newRule);
                     // Mantém a lista ordenada
                     std::sort(_hitRuleListOwner->begin(), _hitRuleListOwner->end());
@@ -7902,9 +8022,10 @@ void AnimationManager::DrawHitCountNumberPopup() {
             hit_count_error_msg = "";  // Limpa erro
             _isHitCountNumberPopupOpen = false;
             ImGui::CloseCurrentPopup();
-            // --- INÍCIO DA CORREÇÃO: Reabre o popup principal ---
+
             _isConditionsEffectsPopupOpen = true;
-            // --- FIM DA CORREÇÃO ---
+
+
         }
 
         // Exibe a mensagem de erro, se houver

@@ -2605,53 +2605,81 @@ found_parent_instances_onhit:;
 
 
     // 5. Ordena por hitCount (necessário para a lógica de "melhor camada")
-    std::sort(allRules.begin(), allRules.end());
-
-    // 6. Encontrar a "camada" mais alta de regras válidas e mesclar seus efeitos
-    int highestValidHitCount = -1;              // Rastreia a "camada" mais alta (ex: 5-hits, 12-hits)
-    std::vector<AppliedEffect> effectsToApply;  // Lista final de efeitos mesclados
-
+    std::vector<HitCountRule> comboRules;
+    std::vector<HitCountRule> periodicRules;
     for (const auto& rule : allRules) {
-        // A regra é alcançável? (ex: acerto 5, regra 5)
-        if (hitCount >= rule.hitCount) {
-            // O ator cumpre os requisitos de perks?
-            if (NCheckActorHasPerks(actor, rule.perks)) {
-                // Esta regra é válida.
-                if (rule.hitCount > highestValidHitCount) {
-                    // Esta é uma nova camada (ex: encontramos uma regra de 12 hits, a anterior era de 5)
-                    highestValidHitCount = rule.hitCount;
-                    effectsToApply.clear();  // Descarta todos os efeitos da camada anterior (ex: 5-hit)
-                    effectsToApply.insert(effectsToApply.end(), rule.effects.begin(), rule.effects.end());
-                } else if (rule.hitCount == highestValidHitCount) {
-                    // Esta regra é da MESMA camada (ex: outra regra de 12 hits da Stance)
-                    // Nós mesclamos (anexamos) os efeitos.
-                    effectsToApply.insert(effectsToApply.end(), rule.effects.begin(), rule.effects.end());
-                }
-                // Se rule.hitCount < highestValidHitCount, ignoramos (é de uma camada inferior).
-            }
+        if (rule.isPeriodic) {
+            periodicRules.push_back(rule);
         } else {
-            // A lista está ordenada. Se hitCount (ex: 4) for menor que rule.hitCount (ex: 5),
-            // podemos parar de procurar.
-            break;
+            comboRules.push_back(rule);
         }
     }
 
-    // 7. Aplicar os efeitos mesclados (ou limpar se nenhum foi encontrado)
-    if (highestValidHitCount != -1) {
-        // Encontramos pelo menos uma regra válida.
-        // Remove duplicatas da lista *final* de efeitos mesclados.
-        std::sort(effectsToApply.begin(), effectsToApply.end());
-        effectsToApply.erase(std::unique(effectsToApply.begin(), effectsToApply.end()), effectsToApply.end());
+    std::vector<AppliedEffect> finalEffectsToApply;
 
-        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados da camada de HitCount {}", effectsToApply.size(),
-                        highestValidHitCount);
-        ApplyHitEffects(actor, effectsToApply);
+    // 6. Processar Regras de "Combo" (Lógica antiga)
+    std::sort(comboRules.begin(), comboRules.end());  // Ordena por hitCount
+    int highestValidHitCount = -1;
+    std::vector<AppliedEffect> comboEffectsLayer;
+
+    for (const auto& rule : comboRules) {
+        if (hitCount >= rule.hitCount) {
+            if (NCheckActorHasPerks(actor, rule.perks)) {
+                if (rule.hitCount > highestValidHitCount) {
+                    highestValidHitCount = rule.hitCount;
+                    comboEffectsLayer.clear();  // Descarta camada anterior
+                    comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
+                } else if (rule.hitCount == highestValidHitCount) {
+                    comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
+                }
+            }
+        } else {
+            break;  // Lista está ordenada
+        }
+    }
+
+    if (highestValidHitCount != -1) {
+        SKSE::log::info("[OnHit] Encontrada camada de Combo válida: {} hits.", highestValidHitCount);
+        finalEffectsToApply.insert(finalEffectsToApply.end(), comboEffectsLayer.begin(), comboEffectsLayer.end());
+    }
+
+    // 7. Processar Regras de "Hit Effects" (Lógica Nova)
+    if (hitCount > 0) {  // Só processa se houver pelo menos 1 hit
+        for (const auto& rule : periodicRules) {
+            // Regra é válida se hitCount > 0 E o hit atual é um múltiplo
+            if (rule.hitCount > 0 && (hitCount % rule.hitCount == 0)) {
+                // Checa os perks
+                if (NCheckActorHasPerks(actor, rule.perks)) {
+                    SKSE::log::info("[OnHit] Regra Periódica ativada: ({} / {}).", hitCount, rule.hitCount);
+                    // Adiciona os efeitos. Não limpamos, acumulamos.
+                    finalEffectsToApply.insert(finalEffectsToApply.end(), rule.effects.begin(), rule.effects.end());
+                } else {
+                    SKSE::log::info("[OnHit] Regra Periódica pulada (falha no perk): ({} / {}).", hitCount,
+                                    rule.hitCount);
+                }
+            }
+        }
+    }
+
+    // 8. Aplicar os efeitos mesclados de ambos os tipos
+    if (!finalEffectsToApply.empty()) {
+        // Remove duplicatas da lista *final*
+        std::sort(finalEffectsToApply.begin(), finalEffectsToApply.end());
+        finalEffectsToApply.erase(std::unique(finalEffectsToApply.begin(), finalEffectsToApply.end()),
+                                  finalEffectsToApply.end());
+
+        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Combo + Periódico) para {} acertos.",
+                        finalEffectsToApply.size(), hitCount);
+        ApplyHitEffects(actor, finalEffectsToApply);
     } else {
-        // Nenhuma regra válida foi encontrada (ex: contagem de acertos é 1, mas a primeira regra é 5)
-        // Aplica uma lista vazia, o que limpará quaisquer efeitos de acerto anteriores.
-        SKSE::log::info("[OnHit] Nenhuma HitRule válida encontrada para {} acertos. Limpando efeitos.", hitCount);
+        // Nenhuma regra (nem combo, nem periódica) foi ativada.
+        // Limpa quaisquer efeitos de acerto anteriores.
+        SKSE::log::info(
+            "[OnHit] Nenhuma regra (Combo ou Periódica) válida encontrada para {} acertos. Limpando efeitos.",
+            hitCount);
         ApplyHitEffects(actor, {});
     }
+    // --- FIM DA NOVA LÓGICA ---
 }
 
 

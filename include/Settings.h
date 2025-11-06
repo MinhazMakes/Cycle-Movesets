@@ -103,6 +103,7 @@ struct HitCountRule {
     int hitCount = 0;
     std::vector<PerkDef> perks;
     std::vector<AppliedEffect> effects;
+    bool isPeriodic = false;
 
     // Operador para ordenação (útil para a UI)
     bool operator<(const HitCountRule& other) const { return hitCount < other.hitCount; }
