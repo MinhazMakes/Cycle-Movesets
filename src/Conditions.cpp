@@ -1,4 +1,5 @@
 #include "Conditions.h"  // Certifique-se que o include para Conditions.h está correto
+#include "PCH.h"
 
 namespace Conditions {
     // Construtor
@@ -57,4 +58,41 @@ namespace Conditions {
         // Se o texto não for reconhecido, falha
         return false;
     }
-}  // namespace Conditions
+
+    IsRefFormID::IsRefFormID() {
+        RefFormIDComponent = static_cast<ITextConditionComponent*>(AddBaseComponent(
+            ConditionComponentType::kText, "Ref FormID", "O RefFormID exato a ser verificado (ex: NPC_Bandit_Leader)"));
+
+        RefFormIDComponent->SetAllowSpaces(false);  // EditorIDs geralmente não têm espaços
+    }
+
+    RE::BSString IsRefFormID::GetArgument() const { return RefFormIDComponent->GetTextValue(); }
+
+    bool IsRefFormID::EvaluateImpl(RE::TESObjectREFR* a_refr, [[maybe_unused]] RE::hkbClipGenerator* a_clipGenerator,
+                                  [[maybe_unused]] void* a_subMod) const {
+        if (!a_refr) {
+            return false;
+        }
+        RE::FormID actualFormID = a_refr->GetFormID();
+
+        // 2. Obtém o texto que você digitou na condição (ex: "00000014")
+        std::string textValue = RefFormIDComponent->GetTextValue().c_str();
+        RE::FormID expectedFormID = 0;
+
+        try {
+            // Tenta converter a string hexadecimal para um número (RE::FormID é uint32_t).
+            // 'nullptr, 16' força a interpretação como base hexadecimal.
+            expectedFormID = std::stoul(textValue, nullptr, 16);
+        } catch (...) {
+            // Se o usuário digitar algo que não é hex válido (ex: "Player"), falha silenciosamente ou loga erro.
+            // logger::warn("[IsEditorID] Valor inválido digitado: '{}'", textValue);
+            return false;
+        }
+
+        // 3. Compara os números
+        bool match = (actualFormID == expectedFormID);
+
+
+        return match;
+    }
+}  

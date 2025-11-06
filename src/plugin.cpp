@@ -46,6 +46,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         {
             // Registra sua nova condição
             RegisterCondition<Conditions::IsEquipSlotOccupied>();
+            RegisterCondition<Conditions::IsRefFormID>();
         } else {
             logger::error("Falha ao requisitar a API de Condicoes do OAR.");
         }

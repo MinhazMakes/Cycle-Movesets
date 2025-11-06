@@ -389,6 +389,9 @@ private:
     void DrawConditionsEffectsPopup();
     void DrawHitCountNumberPopup();
 
+    void AddIsRefFormIDCondition(rapidjson::Value& conditionsArray, const std::string& refFormID, bool negated,
+                                 rapidjson::Document::AllocatorType& allocator);
+
 
     // Funções para converter seus dados para JSON (essencial para o cache)
     void FromJson(const rapidjson::Value& json, SubAnimationDef& subAnimDef);

@@ -2451,6 +2451,37 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
     return result;
 }
 
+RE::TESIdleForm* GetIdleByFormID(RE::FormID a_formID, const std::string& a_pluginName) {
+    auto* dataHandler = RE::TESDataHandler::GetSingleton();
+    RE::TESForm* lookupForm = dataHandler ? dataHandler->LookupForm(a_formID, a_pluginName) : nullptr;
+    if (!lookupForm) {
+        SKSE::log::warn("Não foi possível encontrar o FormID 0x{:X} no plugin {}", a_formID, a_pluginName);
+        return nullptr;
+    }
+    // Verificamos se o tipo do formulário é IdleForm e fazemos o cast.
+    if (lookupForm->GetFormType() == RE::FormType::Idle) {
+        return static_cast<RE::TESIdleForm*>(lookupForm);
+    }
+    SKSE::log::warn("O FormID 0x{:X} não é um TESIdleForm.", a_formID);
+    return nullptr;
+}
+
+
+
+void PlayIdleAnimationTarget(RE::Actor* a_actor, RE::TESIdleForm* a_idle, RE::Actor* a_target) {
+    if (a_actor && a_idle) {
+        if (auto* processManager = a_actor->GetActorRuntimeData().currentProcess) {
+            processManager->PlayIdle(a_actor, a_idle, a_target);
+
+            SKSE::log::info("Tocando animação idle FormID 0x{:X}", a_idle->GetFormID());
+        } else {
+            SKSE::log::error("Não foi possível obter o AIProcess (currentProcess) do ator.");
+        }
+    }
+}
+
+const std::string skyrim = "Skyrim.esm";
+
 RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     const RE::TESHitEvent* a_event, RE::BSTEventSource<RE::TESHitEvent>* a_source) {
     auto player = RE::PlayerCharacter::GetSingleton();
@@ -2462,7 +2493,7 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     if (!a_event->cause->IsPlayerRef()) {
         return RE::BSEventNotifyControl::kContinue;
     }
-
+    auto* Teste = GetIdleByFormID(0xF4699, skyrim);
     // 3. Checar se o alvo é um NPC válido
     auto* targetNPC = a_event->target.get()->As<RE::Actor>();
     if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
@@ -2480,6 +2511,8 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
             SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount);
             // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
+            PlayIdleAnimationTarget(player, Teste, targetNPC);
+            //player->NotifyAnimationGraph("attackPowerStartInPlace");
             g_hitComboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
             g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;

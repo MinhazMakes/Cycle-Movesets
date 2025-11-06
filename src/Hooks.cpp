@@ -2835,9 +2835,17 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
                     case RuleType::Player:
                         AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false, allocator);
                         break;
-                    case RuleType::GeneralNPC:
-                        AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, true, allocator);
+                    case RuleType::GeneralNPC: {
+                        // Cria um bloco OR para conter as duas formas de identificar (ou não) o player
+                        rapidjson::Value playerOrBlock(rapidjson::kObjectType);
+                        playerOrBlock.AddMember("condition", "OR", allocator);
+                        rapidjson::Value playerOrConditions(rapidjson::kArrayType);
+                        AddIsActorBaseCondition(playerOrConditions, "Skyrim.esm", 0x7, true, allocator);
+                        AddIsRefFormIDCondition(playerOrConditions, "00000014", true, allocator);
+                        playerOrBlock.AddMember("Conditions", playerOrConditions, allocator);
+                        andConditions.PushBack(playerOrBlock, allocator);
                         break;
+                    }
                     case RuleType::UniqueNPC:
                         AddIsActorBaseCondition(andConditions, config.pluginName, config.formID, false, allocator);
                         break;
@@ -8038,3 +8046,20 @@ void AnimationManager::DrawHitCountNumberPopup() {
     }
 }
 
+void AnimationManager::AddIsRefFormIDCondition(rapidjson::Value& conditionsArray, const std::string& refFormID,
+                                               bool negated, rapidjson::Document::AllocatorType& allocator) {
+    rapidjson::Value condition(rapidjson::kObjectType);
+    // Nome exato da condição registrada no C++
+    condition.AddMember("condition", "IsRefFormID", allocator);
+    condition.AddMember("requiredPlugin", "CycleMovesets", allocator);
+    condition.AddMember("requiredVersion", "1.0.0.0", allocator);
+
+    if (negated) {
+        condition.AddMember("negated", true, allocator);
+    }
+
+    // O nome deste campo DEVE ser idêntico ao primeiro parâmetro de AddBaseComponent na sua classe C++
+    condition.AddMember("Ref FormID", rapidjson::Value(refFormID.c_str(), allocator), allocator);
+
+    conditionsArray.PushBack(condition, allocator);
+}
