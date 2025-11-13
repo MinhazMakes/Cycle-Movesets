@@ -1745,11 +1745,12 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
             GlobalControl::g_currentHitCount = 0;
             player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
             AnimationManager::GetSingleton()->OnHit(player, 0);
+            
         }
       }
-
+    const std::string_view eventName = a_event->tag;
     if (a_event && a_event->holder && a_event->holder->IsPlayerRef()) {
-        const std::string_view eventName = a_event->tag;
+        
         
         if(eventName == "weaponSwing" || eventName == "weaponLeftSwing" ||
             eventName == "h2hAttack" || eventName == "PowerAttack_Start_end") {
@@ -1772,9 +1773,14 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
             if (Settings::CycleMoveset) {
                 TriggerSmartRandomNumber(std::string(eventName));
             }
+        } else if (eventName == "KillMoveEnd" || eventName == "pairEnd") {
+            logger::info("Evento de animação recebido: {}", eventName);
+            player->NotifyAnimationGraph("EnableBumper");
+            player->NotifyAnimationGraph("tailCombatIdle");
+            player->DrawWeaponMagicHands(true);
         }
 
-    }
+    } 
     return RE::BSEventNotifyControl::kContinue;
 }
 
@@ -2481,6 +2487,7 @@ void PlayIdleAnimationTarget(RE::Actor* a_actor, RE::TESIdleForm* a_idle, RE::Ac
 }
 
 const std::string skyrim = "Skyrim.esm";
+const std::string dawn = "Dawnguard.esm";
 
 RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     const RE::TESHitEvent* a_event, RE::BSTEventSource<RE::TESHitEvent>* a_source) {
@@ -2493,13 +2500,13 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     if (!a_event->cause->IsPlayerRef()) {
         return RE::BSEventNotifyControl::kContinue;
     }
-    auto* Teste = GetIdleByFormID(0xF4699, skyrim);
+    auto* Teste = GetIdleByFormID(0x5570D, skyrim);
+    auto* Test2 = GetIdleByFormID(0x0E6A8, dawn);
     // 3. Checar se o alvo é um NPC válido
     auto* targetNPC = a_event->target.get()->As<RE::Actor>();
     if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
         return RE::BSEventNotifyControl::kContinue;
     }
-
     // 4. Checar se o NPC é hostil
     if (targetNPC->IsHostileToActor(RE::PlayerCharacter::GetSingleton())) {
         // 5. Checar se a fonte do dano é uma arma (e não um feitiço, soco, etc. a menos que queira)
@@ -2511,7 +2518,8 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
             SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount);
             // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
-            PlayIdleAnimationTarget(player, Teste, targetNPC);
+
+            PlayIdleAnimationTarget(targetNPC, Test2, player);
             //player->NotifyAnimationGraph("attackPowerStartInPlace");
             g_hitComboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
@@ -2873,4 +2881,21 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
 
     // 3. Atualiza a lista de rastreamento
     _lastAppliedHitEffects = newEffectsHit;  // Armazena a lista original, não ordenada
+}
+
+void GlobalControl::Instakill::thunk(RE::Actor* a_this) { 
+    if (a_this) {
+        logger::info("Hook Instakill: Impedindo {} de morrer via KillImmediate().", a_this->GetName());
+    } else {
+        logger::info("Hook Instakill: Chamado com um ator nulo.");
+    }
+    auto message = std::format("Hook Instakill: Impedindo {} de morrer via KillImmediate().", a_this->GetName());
+    RE::DebugMessageBox(message.c_str());
+    // 3. O PONTO-CHAVE
+    // Para impedir a morte, nós simplesmente NÃO chamamos a função original.
+    // Se você quisesse que o ator morresse normalmente, você chamaria:
+    // func(a_this);
+
+    // Como não queremos que ele morra, nós apenas retornamos.
+    return;
 }

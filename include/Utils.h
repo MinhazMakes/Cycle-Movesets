@@ -364,8 +364,14 @@ namespace GlobalControl {
                           std::int64_t* equipSlot, char queueEquip, char forceEquip, char playSounds, char applyNow);
         static inline REL::Relocation<decltype(thunk)> func;
     };
+
     struct Unequip2H {
         static std::int64_t thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData);
+        static inline REL::Relocation<decltype(thunk)> func;
+    };
+
+    struct Instakill {
+        static void thunk(RE::Actor* a_this);
         static inline REL::Relocation<decltype(thunk)> func;
     };
 

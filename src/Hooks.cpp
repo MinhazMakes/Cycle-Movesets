@@ -362,12 +362,21 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         _managedFiles.clear();
         for (const auto& mod : _allMods) {
             for (const auto& subAnim : mod.subAnimations) {
-                if (std::filesystem::exists(subAnim.path)) {
-                    std::ifstream fileStream(subAnim.path);
+                std::filesystem::path userJsonPath;
+                if (mod.name == "[DAR] Animations") {
+                    userJsonPath = subAnim.path / "user.json";
+                } else {
+                    userJsonPath = subAnim.path.parent_path() / "user.json";
+                }
+
+                // Verifica se o *user.json* existe e se é gerenciado
+                if (std::filesystem::exists(userJsonPath)) {
+                    std::ifstream fileStream(userJsonPath);
+                    if (!fileStream) continue;
                     std::string content((std::istreambuf_iterator<char>(fileStream)), std::istreambuf_iterator<char>());
                     fileStream.close();
                     if (content.find("OAR_CYCLE_MANAGER_CONDITIONS") != std::string::npos) {
-                        _managedFiles.insert(subAnim.path);
+                        _managedFiles.insert(userJsonPath);  
                     }
                 }
             }
@@ -2502,8 +2511,11 @@ void AnimationManager::SaveAllSettings() {
                 fileUpdates[managedPath] = {};  // Adiciona para a fila de desativação
             }
         }
+        _managedFiles.clear();  // Limpa a lista antiga
         for (const auto& pair : fileUpdates) {
-            _managedFiles.insert(pair.first);
+            if (!pair.second.empty()) {  // Só adiciona se não for um órfão
+                _managedFiles.insert(pair.first);
+            }
         }
 
         // 4. Escreve os arquivos config.json usando a lógica atualizada de UpdateOrCreateJson
@@ -2962,18 +2974,16 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
                 conditions.PushBack(masterOrBlock, allocator);
             }
         } else {  // "Kill switch" condition
-            rapidjson::Value masterOrBlock(rapidjson::kObjectType);
-            masterOrBlock.AddMember("condition", "OR", allocator);
-            masterOrBlock.AddMember("comment", "OAR_CYCLE_MANAGER_CONDITIONS", allocator);
-            rapidjson::Value innerConditions(rapidjson::kArrayType);
-            rapidjson::Value andBlock(rapidjson::kObjectType);
-            andBlock.AddMember("condition", "AND", allocator);
-            rapidjson::Value andConditions(rapidjson::kArrayType);
-            AddCompareValuesCondition(andConditions, "CycleMovesetDisable", 1, allocator);
-            andBlock.AddMember("Conditions", andConditions, allocator);
-            innerConditions.PushBack(andBlock, allocator);
-            masterOrBlock.AddMember("Conditions", innerConditions, allocator);
-            conditions.PushBack(masterOrBlock, allocator);
+            // Esta sub-animação não está mais sendo usada. Deleta o arquivo user.json.
+            if (std::filesystem::exists(jsonPath)) {
+                try {
+                    SKSE::log::info("Deletando user.json não utilizado: {}", jsonPath.string());
+                    std::filesystem::remove(jsonPath);
+                } catch (const std::filesystem::filesystem_error& e) {
+                    SKSE::log::error("Falha ao deletar user.json não utilizado {}: {}", jsonPath.string(), e.what());
+                }
+            }
+            return;  // Retorna para não salvar um documento vazio.
         }
 
         // Save the document
@@ -3696,16 +3706,15 @@ void ParseHitRulesJson(const rapidjson::Value& sourceObject, const std::string& 
 
             // Se o arquivo de UI não foi requerido nesta operação de salvamento, ele é um órfão.
             if (requiredFiles.find(userCycleMovesetPath) == requiredFiles.end()) {
-                // Seja para limpar um arquivo existente ou criar um novo para sobrescrever um fallback,
-                // a operação é a mesma: escrever "[]" no arquivo.
-                SKSE::log::info("Limpando/Criando User_CycleMoveset.json órfão em: {}", userCycleMovesetPath.string());
-
-                std::ofstream ofs(userCycleMovesetPath, std::ofstream::trunc);
-                if (ofs) {
-                    ofs << "[]";  // Escreve um array JSON vazio
-                    ofs.close();
-                } else {
-                    SKSE::log::error("Falha ao abrir para limpar/criar o arquivo: {}", userCycleMovesetPath.string());
+                
+                if (std::filesystem::exists(userCycleMovesetPath)) {
+                    try {
+                        std::filesystem::remove(userCycleMovesetPath);
+                        SKSE::log::info("Deletando User_CycleMoveset.json órfão: {}", userCycleMovesetPath.string());
+                    } catch (const std::filesystem::filesystem_error& e) {
+                        SKSE::log::error("Falha ao deletar o arquivo órfão {}: {}", userCycleMovesetPath.string(),
+                                         e.what());
+                    }
                 }
             }
         }
@@ -7190,6 +7199,9 @@ RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
         const REL::Relocation<std::uintptr_t> targetU{REL::RelocationID(37945, 38901)};
         GlobalControl::Unequip2H::func =
             trampoline.write_call<5>(targetU.address() + REL::Relocate(0x138, 0x1b9), GlobalControl::Unequip2H::thunk);
+       /* const REL::Relocation<std::uintptr_t> targetK{REL::RelocationID(37624, 39637)};
+        GlobalControl::Instakill::func =
+            trampoline.write_call<5>(targetK.address() + REL::Relocate(0x1A0, 0x544), GlobalControl::Instakill::thunk);*/
     }
 
 int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
