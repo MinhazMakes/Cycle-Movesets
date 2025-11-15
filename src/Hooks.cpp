@@ -466,7 +466,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         SKSE::log::info("Carregados {} Spells (filtrados).", _allSpells.size());
     }
 
-    void AnimationManager::ProcessTopLevelMod(const std::filesystem::path& modPath) {
+    void AnimationManager::ProcessTopLevelMod(const std::filesystem::path& modPath, bool isFirstPerson) {
         try {
         std::filesystem::path configPath = modPath / "config.json";
         if (!std::filesystem::exists(configPath)) return;
@@ -483,11 +483,16 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             AnimationModDef modDef;
             modDef.name = doc["name"].GetString();
             modDef.author = doc["author"].GetString();
+            modDef.isFirstPerson = isFirstPerson;
+            if (isFirstPerson) {
+                SKSE::log::info("[ProcessTopLevelMod] Mod de 1ª Pessoa Encontrado: {}", modDef.name);
+            }
             for (const auto& subEntry : std::filesystem::directory_iterator(modPath)) {
                 if (subEntry.is_directory() && std::filesystem::exists(subEntry.path() / "config.json")) {
                     SubAnimationDef subAnimDef;
                     subAnimDef.name = PathToUTF8(subEntry.path().filename());
                     subAnimDef.path = subEntry.path() / "config.json";
+                    subAnimDef.isFirstPerson = isFirstPerson;
                     ScanSubAnimationFolderForTags(subEntry.path(), subAnimDef);
                     modDef.subAnimations.push_back(subAnimDef);
                 }
@@ -705,7 +710,10 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                     std::string mod_name_str = modDef.name;
                     std::transform(mod_name_str.begin(), mod_name_str.end(), mod_name_str.begin(), ::tolower);
                     if (filter_str.empty() || mod_name_str.find(filter_str) != std::string::npos) {
-                    
+                        std::string modDisplayName = modDef.name;
+                        if (modDef.isFirstPerson) {
+                            modDisplayName = "[1st Person] " + modDisplayName;
+                        }
                         if (ImGui::Button((LOC("add") + modDef.name).c_str())) {
                             ModInstance newModInstance;
                             newModInstance.sourceModIndex = modIdx;
@@ -761,8 +769,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                         if (!filter_str.empty() && mod_name_str.find(filter_str) != std::string::npos) {
                             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
                         }
-
-                        if (ImGui::TreeNode(modDef.name.c_str())) {
+                        std::string modDisplayName = modDef.name;
+                        if (modDef.isFirstPerson) {
+                            modDisplayName = "[1st Person] " + modDisplayName;
+                        }
+                        if (ImGui::TreeNode(modDisplayName.c_str())) {
                             if (modNameMatches) {
                                 // Loop interno pelos submovesets (filhos)
                                 for (size_t subAnimIdx = 0; subAnimIdx < modDef.subAnimations.size(); ++subAnimIdx) {
@@ -803,8 +814,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                                     } else {
                                         ImGui::SameLine();
                                     }
-
-                                    ImGui::Text("%s", subAnimDef.name.c_str());
+                                    std::string subAnimDisplayName = subAnimDef.name;
+                                    if (subAnimDef.isFirstPerson || modDef.isFirstPerson) {
+                                        subAnimDisplayName = "[1st Person] " + subAnimDisplayName;
+                                    }
+                                    ImGui::Text("%s", subAnimDisplayName.c_str());
                                     ImGui::PopID();
                                 }
                             } else {
@@ -847,7 +861,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                                         ImGui::SameLine();
                                     }
 
-                                    ImGui::Text("%s", subAnimDef.name.c_str());
+                                    std::string subAnimDisplayName = subAnimDef.name;
+                                    if (subAnimDef.isFirstPerson || modDef.isFirstPerson) {
+                                        subAnimDisplayName = "[1st Person] " + subAnimDisplayName;
+                                    }
+                                    ImGui::Text("%s", subAnimDisplayName.c_str());
                                     ImGui::PopID();
                                 }
                             }
@@ -5254,72 +5272,51 @@ void AnimationManager::LoadCycleMovesets() {
             _darSubMovesets.clear();
             SKSE::log::info("[ScanDarAnimations] Vetor _darSubMovesets foi limpo.");
 
-            const std::filesystem::path darRootPath =
-                "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
-
-            // Convertendo para std::string para o log
-            auto u8_darRootPath = darRootPath.u8string();
-            SKSE::log::info("[ScanDarAnimations] Caminho a ser verificado: {}",
-                            std::string(u8_darRootPath.begin(), u8_darRootPath.end()));
-
-            if (!std::filesystem::exists(darRootPath) || !std::filesystem::is_directory(darRootPath)) {
-                SKSE::log::warn("[ScanDarAnimations] A pasta raiz do DAR (_CustomConditions) não foi encontrada em '{}'.",
-                                std::string(u8_darRootPath.begin(), u8_darRootPath.end()));
-                RE::DebugNotification("Pasta do DAR (_CustomConditions) não encontrada.");
-                return;
-            }
-
-            SKSE::log::info("[ScanDarAnimations] Pasta encontrada. Iniciando iteração pelas subpastas...");
-            int folderCount = 0;
-            for (const auto& entry : std::filesystem::directory_iterator(darRootPath)) {
-                folderCount++;
-
-                auto u8_entryPath = entry.path().u8string();
-                SKSE::log::info("[ScanDarAnimations] [LOOP {}] Verificando a entrada: '{}'", folderCount,
-                                std::string(u8_entryPath.begin(), u8_entryPath.end()));
-
-                if (entry.is_directory()) {
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] É um diretório. Processando...", folderCount);
-
-                    SubAnimationDef subAnimDef;
-
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] Extraindo nome da pasta...", folderCount);
-
-                    // ===================================================================
-                    // CORREÇÃO PRINCIPAL: Converter explicitamente std::u8string para std::string
-                    // ===================================================================
-                    auto u8_filename = entry.path().filename().u8string();
-                    subAnimDef.name = std::string(u8_filename.begin(), u8_filename.end());
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] Nome extraído: '{}'", folderCount, subAnimDef.name);
-
-                    subAnimDef.path = entry.path();
-                    auto u8_subAnimPath = subAnimDef.path.u8string();
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] Path definido como: '{}'", folderCount,
-                                    std::string(u8_subAnimPath.begin(), u8_subAnimPath.end()));
-
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] Chamando ScanSubAnimationFolderForTags para '{}'...",
-                                    folderCount, subAnimDef.name);
-                    ScanSubAnimationFolderForTags(entry.path(), subAnimDef);
-                    SKSE::log::info(
-                        "[ScanDarAnimations] [LOOP {}] Retornou de ScanSubAnimationFolderForTags. A pasta tem animações: "
-                        "{}",
-                        folderCount, subAnimDef.hasAnimations);
-
-                    if (subAnimDef.hasAnimations) {
-                        SKSE::log::info("[ScanDarAnimations] [LOOP {}] O submoveset tem animações. Adicionando ao vetor...",
-                                        folderCount);
-                        _darSubMovesets.push_back(subAnimDef);
-                        SKSE::log::info("[ScanDarAnimations] [LOOP {}] Adicionado com sucesso: '{}'", folderCount,
-                                        subAnimDef.name);
-                    } else {
-                        SKSE::log::info(
-                            "[ScanDarAnimations] [LOOP {}] O submoveset '{}' não contém arquivos .hkx e será pulado.",
-                            folderCount, subAnimDef.name);
-                    }
-                } else {
-                    SKSE::log::info("[ScanDarAnimations] [LOOP {}] A entrada não é um diretório. Pulando.", folderCount);
+           auto scanDarPath = [&](const std::filesystem::path& rootPath, bool isFirstPerson) {
+                if (!std::filesystem::exists(rootPath) || !std::filesystem::is_directory(rootPath)) {
+                    SKSE::log::warn("[ScanDarAnimations] A pasta raiz do DAR não foi encontrada em '{}'.",
+                                    PathToUTF8(rootPath));
+                    return;
                 }
-            }
+
+                SKSE::log::info("[ScanDarAnimations] Escaneando pasta DAR (1stPerson={}): {}", isFirstPerson,
+                                PathToUTF8(rootPath));
+
+                for (const auto& entry : std::filesystem::directory_iterator(rootPath)) {
+                    if (entry.is_directory()) {
+                        SubAnimationDef subAnimDef;
+
+                        auto u8_filename = entry.path().filename().u8string();
+                        subAnimDef.name = std::string(u8_filename.begin(), u8_filename.end());
+                        subAnimDef.path = entry.path();
+                        subAnimDef.isFirstPerson = isFirstPerson;  // <-- MARCA A FLAG AQUI
+
+                        ScanSubAnimationFolderForTags(entry.path(), subAnimDef);
+
+                        if (subAnimDef.hasAnimations) {
+                            if (isFirstPerson) {
+                                SKSE::log::info("[ScanDarAnimations] Sub-moveset de 1ª Pessoa Encontrado: {}",
+                                                subAnimDef.name);
+                            }
+                            _darSubMovesets.push_back(subAnimDef);
+                        }
+                    }
+                }
+            };
+
+            // Define os dois caminhos (3ª pessoa e 1ª pessoa)
+            const std::filesystem::path darRootPath3rd =
+                "Data\\meshes\\actors\\character\\animations\\DynamicAnimationReplacer\\_CustomConditions";
+            const std::filesystem::path darRootPath1st =
+                "Data\\meshes\\actors\\character\\_1stperson\\animations\\DynamicAnimationReplacer\\_CustomConditions";
+
+            // Escaneia ambos os caminhos
+            scanDarPath(darRootPath3rd, false);
+            scanDarPath(darRootPath1st, true);
+
+            // O resto da função original (try/catch e logs finais) permanece
+            // ^-- FIM DA ALTERAÇÃO --^
+
         } catch (const std::filesystem::filesystem_error& e) {
             SKSE::log::critical("[ScanDarAnimations] CRASH! ERRO DE FILESYSTEM DURANTE O SCAN: {}", e.what());
             RE::DebugNotification("ERRO GRAVE ao ler pastas DAR! Verifique os logs.");
@@ -6844,6 +6841,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
         subAnimDef.dpaTags.hasB = json["dpaTags"]["B"].GetBool();
         subAnimDef.dpaTags.hasL = json["dpaTags"]["L"].GetBool();
         subAnimDef.dpaTags.hasR = json["dpaTags"]["R"].GetBool();
+        subAnimDef.isFirstPerson = json.HasMember("isFirstPerson") ? json["isFirstPerson"].GetBool() : false;
     }
 
     // Converte sua struct SubAnimationDef para um objeto JSON
@@ -6864,6 +6862,8 @@ void AnimationManager::LoadGameDataForNpcRules() {
         writer.Bool(subAnimDef.hasAnimations);
         writer.Key("hasCPA");
         writer.Bool(subAnimDef.hasCPA);
+        writer.Key("isFirstPerson");
+        writer.Bool(subAnimDef.isFirstPerson);
         writer.Key("dpaTags");
         writer.StartObject();
         writer.Key("A");
@@ -6882,6 +6882,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
     void AnimationManager::FromJson(const rapidjson::Value& json, AnimationModDef& modDef) {
         modDef.name = json["name"].GetString();
         modDef.author = json["author"].GetString();
+        modDef.isFirstPerson = json.HasMember("isFirstPerson") ? json["isFirstPerson"].GetBool() : false;
         const rapidjson::Value& subAnims = json["subAnimations"];
         for (const auto& subJson : subAnims.GetArray()) {
             SubAnimationDef subDef;
@@ -6897,6 +6898,8 @@ void AnimationManager::LoadGameDataForNpcRules() {
         writer.Key("name");
         writer.String(modDef.name.c_str());
         writer.Key("author");
+        writer.Key("isFirstPerson");
+        writer.Bool(modDef.isFirstPerson);
         writer.String(modDef.author.c_str());
         writer.Key("subAnimations");
         writer.StartArray();
@@ -7017,24 +7020,41 @@ void AnimationManager::LoadGameDataForNpcRules() {
         _darSubMovesets.clear();
 
         // --- Escaneamento OAR ---
-        auto processModDirectory = [&](const std::filesystem::path& rootPath) {
-            if (!std::filesystem::exists(rootPath)) return;
+        auto processModDirectory = [&](const std::filesystem::path& rootPath, bool isFirstPerson) {
+            if (!std::filesystem::exists(rootPath)) {
+                // V-- ADICIONE ESTE LOG --V
+                SKSE::log::warn("[PerformFullScan] Caminho de scan (1stPerson={}) não encontrado: {}", isFirstPerson,
+                                PathToUTF8(rootPath));
+                // ^-- FIM DO LOG --^
+                return;
+            }
+            SKSE::log::info("[PerformFullScan] Iniciando escaneamento OAR (1stPerson={}) em: {}", isFirstPerson,
+                            PathToUTF8(rootPath));
             // Itera para encontrar pastas que são a raiz de um "mod" (contêm config.json)
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
-                if (entry.is_directory() && std::filesystem::exists(entry.path() / "config.json")) {
-                    // Verificamos se a pasta pai também tem um config.json. Se tiver, esta é uma sub-animação, não um
-                    // mod raiz.
-                    std::filesystem::path parentPath = entry.path().parent_path();
-                    if (parentPath != rootPath && std::filesystem::exists(parentPath / "config.json")) {
-                        continue;  // Pula sub-animações, ProcessTopLevelMod cuidará delas
+            try {  // Adiciona try/catch por segurança
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+                    if (entry.is_directory() && std::filesystem::exists(entry.path() / "config.json")) {
+                        // Verificamos se a pasta pai também tem um config.json. Se tiver, esta é uma sub-animação, não
+                        // um mod raiz.
+                        std::filesystem::path parentPath = entry.path().parent_path();
+                        if (parentPath != rootPath && std::filesystem::exists(parentPath / "config.json")) {
+                            continue;  // Pula sub-animações, ProcessTopLevelMod cuidará delas
+                        }
+                        ProcessTopLevelMod(entry.path(), isFirstPerson);  // <-- PASSA A FLAG
                     }
-                    ProcessTopLevelMod(entry.path());
                 }
+            } catch (const std::filesystem::filesystem_error& e) {
+                SKSE::log::error("Erro de filesystem em processModDirectory ao escanear '{}': {}", PathToUTF8(rootPath),
+                                 e.what());
             }
         };
 
         const std::filesystem::path oarRootPath = "Data\\meshes\\actors\\character\\animations\\OpenAnimationReplacer";
-        processModDirectory(oarRootPath);
+        const std::filesystem::path oarRootPath1stPerson =
+            "Data\\meshes\\actors\\character\\_1stperson\\animations\\OpenAnimationReplacer";
+
+        processModDirectory(oarRootPath, false);          // Escaneia 3ª pessoa
+        processModDirectory(oarRootPath1stPerson, true);  // Escaneia 1ª pessoa
 
         // --- Escaneamento DAR ---
         ScanDarAnimations();  // Sua função original que popula _darSubMovesets

@@ -2500,27 +2500,23 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     if (!a_event->cause->IsPlayerRef()) {
         return RE::BSEventNotifyControl::kContinue;
     }
-    auto* Teste = GetIdleByFormID(0x5570D, skyrim);
-    auto* Test2 = GetIdleByFormID(0x0E6A8, dawn);
+
     // 3. Checar se o alvo é um NPC válido
     auto* targetNPC = a_event->target.get()->As<RE::Actor>();
+
     if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
         return RE::BSEventNotifyControl::kContinue;
     }
-    // 4. Checar se o NPC é hostil
-    if (targetNPC->IsHostileToActor(RE::PlayerCharacter::GetSingleton())) {
+
+    if (targetNPC->IsHostileToActor(player) && !targetNPC->IsDead()) {
         // 5. Checar se a fonte do dano é uma arma (e não um feitiço, soco, etc. a menos que queira)
         auto* weaponForm = RE::TESForm::LookupByID(a_event->source);
         if (weaponForm && weaponForm->IsWeapon()) {
-
             GlobalControl::g_currentHitCount++;
             player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
             SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount);
             // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
-
-            PlayIdleAnimationTarget(targetNPC, Test2, player);
-            //player->NotifyAnimationGraph("attackPowerStartInPlace");
             g_hitComboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
             g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;

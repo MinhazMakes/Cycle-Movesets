@@ -115,7 +115,7 @@ private:
     ModInstance* _modInstanceToSaveAsCustom = nullptr;
     char _newMovesetNameBuffer[128] = "";
 
-    void ProcessTopLevelMod(const std::filesystem::path& modPath);
+    void ProcessTopLevelMod(const std::filesystem::path& modPath, bool isFirstPerson);
     void GenerateFallbackFolders();
     void DrawAddModModal();
     

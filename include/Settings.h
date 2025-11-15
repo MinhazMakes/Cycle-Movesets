@@ -81,12 +81,14 @@ struct SubAnimationDef {
     bool hasIdle = false;      // Presença de arquivos "idle"
     bool hasAnimations = false;
     DPATags dpaTags;
-    bool hasCPA = false; 
+    bool hasCPA = false;
+    bool isFirstPerson = false;
     std::filesystem::path triggerFile;
 };
 struct AnimationModDef {
     std::string name;
     std::string author;
+    bool isFirstPerson = false;
     std::vector<SubAnimationDef> subAnimations;
 };
 
