@@ -710,10 +710,6 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                     std::string mod_name_str = modDef.name;
                     std::transform(mod_name_str.begin(), mod_name_str.end(), mod_name_str.begin(), ::tolower);
                     if (filter_str.empty() || mod_name_str.find(filter_str) != std::string::npos) {
-                        std::string modDisplayName = modDef.name;
-                        if (modDef.isFirstPerson) {
-                            modDisplayName = "[1st Person] " + modDisplayName;
-                        }
                         if (ImGui::Button((LOC("add") + modDef.name).c_str())) {
                             ModInstance newModInstance;
                             newModInstance.sourceModIndex = modIdx;
@@ -818,7 +814,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                                     if (subAnimDef.isFirstPerson || modDef.isFirstPerson) {
                                         subAnimDisplayName = "[1st Person] " + subAnimDisplayName;
                                     }
-                                    ImGui::Text("%s", subAnimDisplayName.c_str());
+                                    ImGui::Text("%s", subAnimDef.name.c_str());
                                     ImGui::PopID();
                                 }
                             } else {

@@ -4,6 +4,9 @@
 #include <random>
 #include <vector>
 #include <algorithm> // Para std::max_element
+#include <thread>
+#include <atomic>
+#include <chrono>
 #include "Settings.h"
 
 // Scancodes das teclas WASD
@@ -12,6 +15,41 @@ constexpr uint32_t A_KEY = 0x1E;
 constexpr uint32_t S_KEY = 0x1F;
 constexpr uint32_t D_KEY = 0x20;
 int GlobalControl::g_directionalState = 0;
+static std::atomic<int> g_effectUpdateGeneration = 0;
+constexpr int kEffectApplyDelayMS = 400;
+void ScheduleDelayedEffectUpdate(RE::Actor* actor, std::vector<AppliedEffect> newStanceEffects,
+                                 std::vector<AppliedEffect> newMovesetEffects, bool updateStance, bool updateMoveset) {
+    // Incrementa a geração. Qualquer thread anterior dormindo vai perceber que o ID mudou e abortar.
+    int currentGen = ++g_effectUpdateGeneration;
+
+    std::thread([actor, newStanceEffects, newMovesetEffects, updateStance, updateMoveset, currentGen]() {
+        // Dorme pelo tempo determinado
+        std::this_thread::sleep_for(std::chrono::milliseconds(kEffectApplyDelayMS));
+
+        // Verifica se ainda somos a geração atual
+        if (currentGen == g_effectUpdateGeneration) {
+            // Se sim, agenda a tarefa na Thread Principal do Skyrim (TaskInterface)
+            SKSE::GetTaskInterface()->AddTask(
+                [actor, newStanceEffects, newMovesetEffects, updateStance, updateMoveset]() {
+                    // Verificação final de segurança (caso o ator tenha deixado de existir, embora raro com
+                    // TaskInterface imediata)
+                    if (!actor) return;
+
+                    if (updateStance) {
+                        GlobalControl::ApplyAndTrackEffects(actor, newStanceEffects,
+                                                            GlobalControl::g_lastAppliedStanceEffects);
+                    }
+                    if (updateMoveset) {
+                        GlobalControl::ApplyAndTrackEffects(actor, newMovesetEffects,
+                                                            GlobalControl::g_lastAppliedMovesetEffects);
+                    }
+                    // logger::info("Efeitos aplicados após delay (Geração {})", currentGen);
+                });
+        } else {
+            // logger::info("Aplicação de efeitos cancelada (Scroll detectado)");
+        }
+    }).detach();  // Roda em background
+}
 
 struct MatchResult {
     const WeaponCategory* category = nullptr;
@@ -904,10 +942,18 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
         //    - Efeitos em newStanceEffects que NÃO estão em g_lastAppliedStanceEffects são ADICIONADOS.
         //    - g_lastAppliedStanceEffects é atualizado para ser igual a newStanceEffects.
 
-        SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos combinados do Moveset Padrão (Lista Index {})",
-                        firstMovesetCombinedEffects.size(), g_currentMoveset);
+        //SKSE::log::info("[Stance Change/Reset] Aplicando {} efeitos combinados do Moveset Padrão (Lista Index {})",firstMovesetCombinedEffects.size(), g_currentMoveset);
+        SKSE::log::info("[Stance Change] Agendando aplicação de efeitos com delay...");
+
+        // Agenda a atualização tanto da Stance quanto do Moveset (pois resetou para o moveset 1)
+        ScheduleDelayedEffectUpdate(player,
+                                    newStanceEffects,             // Efeitos da nova Stance
+                                    firstMovesetCombinedEffects,  // Efeitos do Moveset 1 (resetado)
+                                    true,                         // Atualizar lista de Stance? Sim
+                                    true                          // Atualizar lista de Moveset? Sim
+        );
         //ApplyAndTrackEffects(player, newStanceEffects, g_lastAppliedStanceEffects);
-        ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
+        //ApplyAndTrackEffects(player, firstMovesetCombinedEffects, g_lastAppliedMovesetEffects);
 
 
         // 6. Atualiza outras lógicas e a UI
@@ -1225,9 +1271,14 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
 
         // 3. Aplica/Remove efeitos do Moveset (combinados com os da stance)
         // ApplyAndTrackEffects compara 'combinedEffects' com 'g_lastAppliedMovesetEffects'
-        SKSE::log::info("[Moveset Change/Reset] Aplicando {} efeitos combinados para Moveset (Lista Index {})",
-                        combinedEffects.size(), g_currentMoveset);
-        ApplyAndTrackEffects(player, combinedEffects, g_lastAppliedMovesetEffects);
+        SKSE::log::info("[Moveset Change] Agendando aplicação de efeitos com delay...");
+
+        // Passamos {} para stanceEffects e false para updateStance, pois não mudamos a stance aqui
+        ScheduleDelayedEffectUpdate(player, {},       // Ignorado pois updateStance é false
+                                    combinedEffects,  // Novos efeitos do moveset
+                                    false,            // Não mexe na Stance
+                                    true              // Atualiza o Moveset
+        );
 
         // 4. Atualiza outras lógicas e a UI *depois* de aplicar efeitos
         UpdatePowerAttackGlobals();
@@ -1682,7 +1733,7 @@ bool GlobalControl::IsThirdPerson() {
 RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpenCloseEvent* event,
                                                                RE::BSTEventSource<RE::MenuOpenCloseEvent>*) {
     if (!event) {
-             return RE::BSEventNotifyControl::kContinue;
+        return RE::BSEventNotifyControl::kContinue;
     }
     const std::array<RE::BSFixedString, 3> relevantMenus = {RE::InventoryMenu::MENU_NAME, RE::ContainerMenu::MENU_NAME,
                                                             RE::FavoritesMenu::MENU_NAME};
