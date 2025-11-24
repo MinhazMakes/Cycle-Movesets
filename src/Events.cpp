@@ -445,50 +445,51 @@ namespace MyMenu {
     }
 
     
-    // O CORPO INTEIRO DA FUNÇÃO QUE VOCÊ RECORTOU DE hooks.h VEM PARA CÁ
+
     void Keybind(const char* label, int* dx_key_ptr) {
-        static std::map<const char*, bool> is_waiting_map;
-        bool& is_waiting_for_key = is_waiting_map[label];
-
         // --- LÓGICA DE EXIBIÇÃO ---
-        const char* button_text = "[Nenhuma]";
+        const char* current_key_name = "[Nenhuma]";
+        // Verifica se a tecla atual existe no mapa para exibir o nome correto
         if (g_dx_to_name_map.count(*dx_key_ptr)) {
-            button_text = g_dx_to_name_map.at(*dx_key_ptr);
+            current_key_name = g_dx_to_name_map.at(*dx_key_ptr);
         }
 
-        if (is_waiting_for_key) {
-            button_text = "[ ... ]";
-        }
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%s", label);
         ImGui::SameLine();
-        if (ImGui::Button(button_text, ImVec2(120, 60))) {
-            is_waiting_for_key = true;
-        }
 
-        // --- LÓGICA DE CAPTURA E CONVERSÃO ---
-        if (is_waiting_for_key) {
-            // Primeiro, verificamos a tecla Escape para cancelar a atribuição
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-                *dx_key_ptr = 0;  // Define como 0 (Nenhuma)
-                is_waiting_for_key = false;
-            } else {
-                // ALTERAÇÃO PRINCIPAL AQUI
-                // Itera diretamente sobre o mapa de teclas que você definiu
-                for (const auto& pair : g_imgui_to_dx_map) {
-                    ImGuiKey key_to_check = pair.first;  // A tecla do ImGui (ex: ImGuiKey_LeftCtrl)
-                    int dx_code = pair.second;           // O código DX correspondente (ex: 29)
+        // Cria um ID único para o Combo para evitar conflitos no ImGui
+        std::string combo_id = std::string("##") + label;
 
-                    if (ImGui::IsKeyPressed(key_to_check)) {
-                        *dx_key_ptr = dx_code;  // Atribui o código DX correto
-                        is_waiting_for_key = false;
+        // --- LÓGICA DO WIDGET COMBO ---
+        if (ImGui::BeginCombo(combo_id.c_str(), current_key_name)) {
+            // Itera sobre o mapa de teclas (g_dx_to_name_map)
+            // Isso incluirá teclado e mouse se estiverem definidos no mapa
+            for (const auto& pair : g_dx_to_name_map) {
+                int code = pair.first;
+                const char* name = pair.second;
+
+                const bool is_selected = (*dx_key_ptr == code);
+
+                // ImGui::Selectable cria um item clicável na lista
+                if (ImGui::Selectable(name, is_selected)) {
+                    // Se o usuário selecionou uma nova tecla
+                    if (*dx_key_ptr != code) {
+                        *dx_key_ptr = code;
+
+                        // Atualiza os registros de hotkey e salva as configurações
                         GlobalControl::UpdateRegisteredHotkeys();
                         MyMenu::SaveSettings();
                         Settings::SyncMovementKeys();
-                        break;
                     }
                 }
+
+                // Garante que o item selecionado esteja focado/visível ao abrir a lista
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
             }
+            ImGui::EndCombo();
         }
     }
     void GamepadKeybind(const char* label, int* dx_key_ptr) {
