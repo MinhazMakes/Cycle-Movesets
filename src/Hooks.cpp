@@ -3390,7 +3390,7 @@ void CreateEffectListJson(rapidjson::Document& doc, rapidjson::Value& targetObje
         effectData.PushBack(effect.formID, allocator);                                           // Índice 2: FormID
         effectData.PushBack(rapidjson::Value(effect.origin.c_str(), allocator),
                             allocator);  // Índice 3: Origem (para UI)
-
+        effectData.PushBack(static_cast<int>(effect.costType), allocator);
         effectArray.PushBack(effectData, allocator);
     }
     targetObject.AddMember(rapidjson::Value(keyName.c_str(), allocator), effectArray, allocator);
@@ -3418,8 +3418,11 @@ void ParseEffectListJson(const rapidjson::Value& sourceObject, const std::string
             std::string plugin = effectData[1].GetString();
             RE::FormID formID = effectData[2].GetUint();
             std::string origin = effectData[3].GetString();
-
-            targetList.push_back({type, plugin, formID, origin});  // Adiciona à lista fornecida
+            SpellCostType cost = SpellCostType::Magicka; // Default
+            if (effectData.Size() >= 5 && effectData[4].IsInt()) {
+                cost = static_cast<SpellCostType>(effectData[4].GetInt());
+            }
+            targetList.push_back({type, plugin, formID, origin, cost });  // Adiciona à lista fornecida
         }
     }
 }
@@ -3434,7 +3437,7 @@ void CreateHitRulesJson(rapidjson::Document& doc, rapidjson::Value& targetObject
     for (const auto& rule : hitRulesList) {
         rapidjson::Value ruleObj(rapidjson::kObjectType);
         ruleObj.AddMember("HitCount", rule.hitCount, allocator);
-
+        ruleObj.AddMember("Trigger", static_cast<int>(rule.trigger), allocator);
         // Reutiliza os helpers existentes para salvar as listas aninhadas
         CreatePerkListJsonFor2H(doc, ruleObj, "PerkList", rule.perks);
         CreateEffectListJson(doc, ruleObj, "AppliedEffects", rule.effects);
@@ -3458,7 +3461,7 @@ void ParseHitRulesJson(const rapidjson::Value& sourceObject, const std::string& 
         if (ruleObj.IsObject() && ruleObj.HasMember("HitCount") && ruleObj["HitCount"].IsInt()) {
             HitCountRule newRule;
             newRule.hitCount = ruleObj["HitCount"].GetInt();
-
+            newRule.trigger = static_cast<AttackTrigger>(ruleObj["Trigger"].GetInt());
             // Reutiliza os helpers existentes para carregar as listas aninhadas
             // Nota: Usamos ParsePerkListJsonFor2H (espera [plugin, formID])
             ParsePerkListJsonFor2H(ruleObj, "PerkList", newRule.perks);
@@ -7507,7 +7510,29 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                             }
                                         }
                                     }
+                                    if (is_selected && type == AppliedEffect::EffectType::Spell && !is_inherited) {
+                                        // Recalcula o iterador pois o push_back/erase pode ter invalidado ou mudado posição
+                                        auto currentIt = std::find_if(tempSelectedEffects.begin(), tempSelectedEffects.end(),
+                                            [&](const AppliedEffect& ae) {
+                                                return ae.formID == item.formID && ae.type == type;
+                                            });
 
+                                        if (currentIt != tempSelectedEffects.end()) {
+                                            ImGui::SameLine();
+                                            ImGui::PushItemWidth(160);
+                                            int currentCost = static_cast<int>(currentIt->costType);
+                                            const char* costs[] = { "Magicka", "Stamina", "Health", "None" };
+
+                                            // ID único para o combo
+                                            std::string comboID = std::format("##Cost_{:X}", item.formID);
+                                            if (ImGui::Combo(comboID.c_str(), &currentCost, costs, 4)) {
+                                                currentIt->costType = static_cast<SpellCostType>(currentCost);
+                                            }
+                                            ImGui::PopItemWidth();
+                                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cost Type");
+                                        }
+                                    }
+                                    
                                     if (is_inherited) ImGui::EndDisabled();
 
                                     ImGui::SameLine(400);
@@ -7520,7 +7545,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         if (_effectTypeFilter == 3) {  // "Selected"
                             for (auto it = tempSelectedEffects.begin(); it != tempSelectedEffects.end();
                                  /* no increment */) {
-                                const auto& selectedEffect = *it;
+                                auto& selectedEffect = *it;
                                 const char* typeLabel = "Unknown";
                                 std::string name, editorID, pluginName;
                                 bool found = false;
@@ -7548,7 +7573,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                         }
                                     }
                                 }
-
+                                
                                 if (!found) {
                                     ++it;
                                     continue;
@@ -7576,8 +7601,21 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                             continue;
                                         }
                                     }
-                                    if (is_inherited) ImGui::EndDisabled();
+                                    if (selectedEffect.type == AppliedEffect::EffectType::Spell && !is_inherited) {
+                                        ImGui::SameLine();
+                                        ImGui::PushItemWidth(160);
+                                        int currentCost = static_cast<int>(selectedEffect.costType);
+                                        const char* costs[] = { "Magicka", "Stamina", "Health", "None" };
 
+                                        std::string comboID = std::format("##CostSel_{:X}", selectedEffect.formID);
+                                        if (ImGui::Combo(comboID.c_str(), &currentCost, costs, 4)) {
+                                            selectedEffect.costType = static_cast<SpellCostType>(currentCost);
+                                        }
+                                        ImGui::PopItemWidth();
+                                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cost Type");
+                                    }
+                                    if (is_inherited) ImGui::EndDisabled();
+                                    
                                     ImGui::SameLine(400);
                                     ImGui::TextDisabled("[%s] %s | %s", typeLabel, editorID.c_str(),
                                                         pluginName.c_str());
@@ -7744,8 +7782,9 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                     ImGui::Separator();
                     if (ImGui::BeginTable(
-                            "HitRulesTable_Periodic", 3,
+                            "HitRulesTable_Periodic", 4,
                             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                        ImGui::TableSetupColumn("Trigger", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                         ImGui::TableSetupColumn("Hit Count", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                         ImGui::TableSetupColumn("Conditions / Effects", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 180.0f);
@@ -7762,6 +7801,9 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                             ImGui::TableNextRow();
                             ImGui::BeginDisabled();
 
+                            
+                            ImGui::TableNextColumn();
+                            ImGui::Text(rule.trigger == AttackTrigger::Hit ? "Hit" : "Swing");
                             ImGui::TableNextColumn();
                             ImGui::Text("Every %d", rule.hitCount);
 
@@ -7792,7 +7834,8 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                                 ImGui::PushID(&rule);
                                 ImGui::TableNextRow();
-
+                                ImGui::TableNextColumn();
+                                ImGui::Text(rule.trigger == AttackTrigger::Hit ? "Hit" : "Swing");
                                 ImGui::TableNextColumn();
                                 ImGui::Text("Every %d", rule.hitCount);
 
@@ -7846,7 +7889,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         else if (_subMovesetToEditEffect)
                             origin = "SubMoveset";  // Usa ponteiro ...Effect
                     }
-                    effectsToSave.push_back({effect.type, effect.pluginName, effect.formID, origin});
+                    effectsToSave.push_back({ effect.type, effect.pluginName, effect.formID, origin, effect.costType });
                 }
             }
             if (_hitRuleToEdit) 
@@ -7993,6 +8036,10 @@ void AnimationManager::DrawHitCountNumberPopup() {
                 }
             }
         }
+        static int triggerType = 0;
+        ImGui::RadioButton("On Hit", &triggerType, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("On Swing", &triggerType, 1);
         ImGui::PopItemWidth();
 
         ImGui::Separator();
@@ -8024,6 +8071,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
                     HitCountRule newRule;
                     newRule.hitCount = _hitCountRuleEditorHitNumber;
                     newRule.isPeriodic = _isCreatingPeriodicHitRule;
+                    newRule.trigger = static_cast<AttackTrigger>(triggerType);
                     _hitRuleListOwner->push_back(newRule);
                     // Mantém a lista ordenada
                     std::sort(_hitRuleListOwner->begin(), _hitRuleListOwner->end());

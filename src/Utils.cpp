@@ -1773,18 +1773,22 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
 
 RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
     const RE::BSAnimationGraphEvent* a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>*) {
+
     auto player = RE::PlayerCharacter::GetSingleton();
-    if (g_comboState.isTimerRunning) {
-        auto now = std::chrono::steady_clock::now();
-        auto time_left_ms = std::chrono::duration_cast<std::chrono::milliseconds>(g_comboState.comboTimeoutTimestamp - now).count();
-        //SKSE::log::info("[UpdateHandler] Checando timer... g_comboState.isTimerRunning: {}. Tempo restante: {} ms", g_comboState.isTimerRunning,time_left_ms);
-    } 
+
+    //if (g_comboState.isTimerRunning) {
+    //    auto now = std::chrono::steady_clock::now();
+    //    auto time_left_ms = std::chrono::duration_cast<std::chrono::milliseconds>(g_comboState.comboTimeoutTimestamp - now).count();
+    //    //SKSE::log::info("[UpdateHandler] Checando timer... g_comboState.isTimerRunning: {}. Tempo restante: {} ms", g_comboState.isTimerRunning,time_left_ms);
+    //} 
+
     if (g_comboState.isTimerRunning && std::chrono::steady_clock::now() >= g_comboState.comboTimeoutTimestamp) {
         g_comboState.isTimerRunning = false;
 
         if (Settings::CycleMoveset) {
             SKSE::GetTaskInterface()->AddTask([]() { TriggerSmartRandomNumber("Fim de Combo (C++)"); });
         }
+
     } else if (g_hitComboState.isTimerRunning &&
                std::chrono::steady_clock::now() >= g_hitComboState.comboTimeoutTimestamp) {
         g_hitComboState.isTimerRunning = false;
@@ -1795,10 +1799,11 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
                             GlobalControl::g_currentHitCount);
             GlobalControl::g_currentHitCount = 0;
             player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
-            AnimationManager::GetSingleton()->OnHit(player, 0);
+            AnimationManager::GetSingleton()->OnHit(player, 0, AttackTrigger::Hit);
             
         }
       }
+
     const std::string_view eventName = a_event->tag;
     if (a_event && a_event->holder && a_event->holder->IsPlayerRef()) {
         
@@ -1811,16 +1816,23 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
                                 GlobalControl::g_currentHitCount);
                 GlobalControl::g_currentHitCount = 0;
                 player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
-                AnimationManager::GetSingleton()->OnHit(player, 0);
+                AnimationManager::GetSingleton()->OnHit(player, 0, AttackTrigger::Hit);
             }
 
+            
             g_comboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::CycleTimer * 1000));
             g_comboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
             
 
-        } else if (eventName == "weaponDraw" || eventName == "weaponSheathe") {
+        }
+        else if (eventName == "HitFrame") {
+            GlobalControl::g_currentSwingCount++;
+            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentSwingCount, AttackTrigger::Swing);
+        }
+        else if (eventName == "weaponDraw" || eventName == "weaponSheathe") {
             g_comboState.isTimerRunning = false;  // Cancela qualquer combo pendente
+			GlobalControl::g_currentSwingCount = 0;
             if (Settings::CycleMoveset) {
                 TriggerSmartRandomNumber(std::string(eventName));
             }
@@ -2566,7 +2578,7 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
             GlobalControl::g_currentHitCount++;
             player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
             SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
-            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount);
+            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount,AttackTrigger::Hit);
             // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
             g_hitComboState.isTimerRunning = true;
             auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
@@ -2577,7 +2589,7 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     return RE::BSEventNotifyControl::kContinue;
 }
 
-void AnimationManager::OnHit(RE::Actor* actor, int hitCount) {
+void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigger) {
     if (!actor || !actor->IsPlayerRef()) {
         return;
     }
@@ -2589,7 +2601,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount) {
     auto cat_it = _categories.find(categoryName);
     if (cat_it == _categories.end()) {
         // Sem categoria, aplica lista vazia (limpa efeitos)
-        ApplyHitEffects(actor, {});
+        ApplyHitEffects(actor, {}, trigger);
         return;
     }
 
@@ -2599,14 +2611,14 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount) {
         originalStanceIndex = availableStances[GlobalControl::g_currentStance - 1].originalIndex;
     } else {
         // Sem stance válida, limpa efeitos
-        ApplyHitEffects(actor, {});
+        ApplyHitEffects(actor, {}, trigger);
         return;
     }
 
     const auto availableMovesets = GetAvailableMovesets(actor, categoryName, originalStanceIndex);
     if (GlobalControl::g_currentMoveset <= 0 || GlobalControl::g_currentMoveset > availableMovesets.size()) {
         // Sem moveset válido, limpa efeitos
-        ApplyHitEffects(actor, {});
+        ApplyHitEffects(actor, {}, trigger);
         return;
     }
     int originalParentMovesetIndex = availableMovesets[GlobalControl::g_currentMoveset - 1].originalIndex;
@@ -2614,7 +2626,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount) {
     // 2. Encontrar Stance, ModInstance (Pai), SubAnimationInstance (Pai)
     const WeaponCategory& category = cat_it->second;
     if (originalStanceIndex <= 0 || originalStanceIndex > category.instances.size()) {
-        ApplyHitEffects(actor, {});
+        ApplyHitEffects(actor, {}, trigger);
         return;
     }
     const CategoryInstance& stanceInstance = category.instances[originalStanceIndex - 1];
@@ -2643,7 +2655,7 @@ found_parent_instances_onhit:;
     if (!parentModInst || !parentSubInst) {
         SKSE::log::error("[OnHit] Não foi possível encontrar Mod/Sub-instâncias pai para o índice {}",
                          originalParentMovesetIndex);
-        ApplyHitEffects(actor, {});
+        ApplyHitEffects(actor, {}, trigger);
         return;
     }
 
@@ -2691,22 +2703,23 @@ found_parent_instances_onhit:;
     allRules.insert(allRules.end(), effectiveSubInst->hitRules.begin(),
                     effectiveSubInst->hitRules.end());  // <-- USA O EFETIVO
 
-
-    // 5. Ordena por hitCount (necessário para a lógica de "melhor camada")
-    std::vector<HitCountRule> comboRules;
-    std::vector<HitCountRule> periodicRules;
+    std::vector<HitCountRule> relevantRules;
     for (const auto& rule : allRules) {
-        if (rule.isPeriodic) {
-            periodicRules.push_back(rule);
-        } else {
-            comboRules.push_back(rule);
+        if (rule.trigger == trigger) {
+            relevantRules.push_back(rule);
         }
     }
-
+    
+    std::vector<HitCountRule> comboRules;
+    std::vector<HitCountRule> periodicRules;
+    for (const auto& rule : relevantRules) {
+        if (rule.isPeriodic) periodicRules.push_back(rule);
+        else comboRules.push_back(rule);
+    }
+	// 6. Processar Regras de "Combo Hit Effects"
     std::vector<AppliedEffect> finalEffectsToApply;
 
-    // 6. Processar Regras de "Combo" (Lógica antiga)
-    std::sort(comboRules.begin(), comboRules.end());  // Ordena por hitCount
+    std::sort(comboRules.begin(), comboRules.end());
     int highestValidHitCount = -1;
     std::vector<AppliedEffect> comboEffectsLayer;
 
@@ -2715,14 +2728,16 @@ found_parent_instances_onhit:;
             if (NCheckActorHasPerks(actor, rule.perks)) {
                 if (rule.hitCount > highestValidHitCount) {
                     highestValidHitCount = rule.hitCount;
-                    comboEffectsLayer.clear();  // Descarta camada anterior
+                    comboEffectsLayer.clear();
                     comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
-                } else if (rule.hitCount == highestValidHitCount) {
+                }
+                else if (rule.hitCount == highestValidHitCount) {
                     comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
                 }
             }
-        } else {
-            break;  // Lista está ordenada
+        }
+        else {
+            break;
         }
     }
 
@@ -2731,62 +2746,82 @@ found_parent_instances_onhit:;
         finalEffectsToApply.insert(finalEffectsToApply.end(), comboEffectsLayer.begin(), comboEffectsLayer.end());
     }
 
-    // 7. Processar Regras de "Hit Effects" (Lógica Nova)
-    if (hitCount > 0) {  // Só processa se houver pelo menos 1 hit
+    std::sort(periodicRules.begin(), periodicRules.end()); // Ordena para garantir consistência (1, 2, 4...)
+    int highestPeriodicInterval = -1;
+    std::vector<AppliedEffect> periodicEffectsLayer;
+    // 7. Processar Regras de "Hit Effects" (Periódicas)
+    if (hitCount > 0) {
         for (const auto& rule : periodicRules) {
-            // Regra é válida se hitCount > 0 E o hit atual é um múltiplo
             if (rule.hitCount > 0 && (hitCount % rule.hitCount == 0)) {
-                // Checa os perks
                 if (NCheckActorHasPerks(actor, rule.perks)) {
-                    SKSE::log::info("[OnHit] Regra Periódica ativada: ({} / {}).", hitCount, rule.hitCount);
-                    // Adiciona os efeitos. Não limpamos, acumulamos.
-                    finalEffectsToApply.insert(finalEffectsToApply.end(), rule.effects.begin(), rule.effects.end());
-                } else {
+                    if (rule.hitCount > highestPeriodicInterval) {
+                        highestPeriodicInterval = rule.hitCount;
+                        periodicEffectsLayer.clear(); // Limpa efeitos de regras "menores" (ex: a cada 1)
+                        periodicEffectsLayer.insert(periodicEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
+                        SKSE::log::info("[OnHit] Regra Periódica Prioritária definida: ({} / {}).", hitCount, rule.hitCount);
+                    }
+                    else if (rule.hitCount == highestPeriodicInterval) {
+                        periodicEffectsLayer.insert(periodicEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
+                    }
+                    /*SKSE::log::info("[OnHit] Regra Periódica ativada: ({} / {}).", hitCount, rule.hitCount);
+                    finalEffectsToApply.insert(finalEffectsToApply.end(), rule.effects.begin(), rule.effects.end());*/
+                }
+                else {
                     SKSE::log::info("[OnHit] Regra Periódica pulada (falha no perk): ({} / {}).", hitCount,
-                                    rule.hitCount);
+                        rule.hitCount);
                 }
             }
         }
     }
-
-    // 8. Aplicar os efeitos mesclados de ambos os tipos
+    finalEffectsToApply.insert(finalEffectsToApply.end(), periodicEffectsLayer.begin(), periodicEffectsLayer.end());
+    // 8. Aplicar os efeitos
+    // AQUI ESTÁ A MUDANÇA: Passamos o trigger para a função ApplyHitEffects
     if (!finalEffectsToApply.empty()) {
-        // Remove duplicatas da lista *final*
         std::sort(finalEffectsToApply.begin(), finalEffectsToApply.end());
         finalEffectsToApply.erase(std::unique(finalEffectsToApply.begin(), finalEffectsToApply.end()),
-                                  finalEffectsToApply.end());
+            finalEffectsToApply.end());
 
-        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Combo + Periódico) para {} acertos.",
-                        finalEffectsToApply.size(), hitCount);
-        ApplyHitEffects(actor, finalEffectsToApply);
-    } else {
-        // Nenhuma regra (nem combo, nem periódica) foi ativada.
-        // Limpa quaisquer efeitos de acerto anteriores.
-        SKSE::log::info(
-            "[OnHit] Nenhuma regra (Combo ou Periódica) válida encontrada para {} acertos. Limpando efeitos.",
-            hitCount);
-        ApplyHitEffects(actor, {});
+        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Trigger: {}).", finalEffectsToApply.size(),
+            trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+        ApplyHitEffects(actor, finalEffectsToApply, trigger);
     }
-    // --- FIM DA NOVA LÓGICA ---
+    else {
+        SKSE::log::info("[OnHit] Nenhuma regra válida encontrada. Limpando efeitos (Trigger: {}).",
+            trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+        ApplyHitEffects(actor, {}, trigger);
+    }
 }
 
 
-void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsHit) {
-    if (!actor) return;
-    if (!actor->IsPlayerRef()) return;  // Só se aplica ao jogador por enquanto
+void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst, AttackTrigger trigger) {
+    if (!actor || !actor->IsPlayerRef()) return;
+
+    // 1. Seleciona qual lista de histórico usar baseada no gatilho (Hit ou Swing)
+    std::vector<AppliedEffect>* pLastAppliedEffects = nullptr;
+
+    if (trigger == AttackTrigger::Hit) {
+        pLastAppliedEffects = &_lastAppliedHitEffects;
+    }
+    else if (trigger == AttackTrigger::Swing) {
+        pLastAppliedEffects = &_lastAppliedSwingEffects; // Requer a declaração no .h
+    }
+    else {
+        return; // Gatilho desconhecido ou não suportado para diffing
+    }
 
     // Usamos cópias para poder ordenar
-    std::vector<AppliedEffect> newEffects = newEffectsHit;
-    // Usa a nova variável de membro para rastreamento
-    std::vector<AppliedEffect> oldEffects = _lastAppliedHitEffects;
+    std::vector<AppliedEffect> newEffects = newEffectsConst;
+    std::vector<AppliedEffect> oldEffects = *pLastAppliedEffects; // Pega o histórico correto
 
     std::sort(newEffects.begin(), newEffects.end());
     std::sort(oldEffects.begin(), oldEffects.end());
 
-    // 1. Encontra efeitos para REMOVER
+    // -----------------------------------------------------------------------
+    // 2. Encontra efeitos para REMOVER (Presentes no antigo, mas não no novo)
+    // -----------------------------------------------------------------------
     std::vector<AppliedEffect> toRemove;
     std::set_difference(oldEffects.begin(), oldEffects.end(), newEffects.begin(), newEffects.end(),
-                        std::back_inserter(toRemove));
+        std::back_inserter(toRemove));
 
     for (const auto& effect : toRemove) {
         RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
@@ -2796,48 +2831,55 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         }
 
         switch (effect.type) {
-            case AppliedEffect::EffectType::Perk:
-                if (auto perk = form->As<RE::BGSPerk>()) {
-                    if (actor->HasPerk(perk)) {
-                        SKSE::log::info("[ApplyHitEffects] Removendo Perk: {}", perk->GetName());
-                        actor->RemovePerk(perk);
-                    }
+        case AppliedEffect::EffectType::Perk:
+            if (auto perk = form->As<RE::BGSPerk>()) {
+                if (actor->HasPerk(perk)) {
+                    SKSE::log::info("[ApplyHitEffects] Removendo Perk (Trigger: {}): {}",
+                        (trigger == AttackTrigger::Hit ? "Hit" : "Swing"), perk->GetName());
+                    actor->RemovePerk(perk);
                 }
-                break;
-            case AppliedEffect::EffectType::Spell: {
-                RE::SpellItem* spellToRemove = form->As<RE::SpellItem>();
-                if (auto activeEffectList = actor->AsMagicTarget()->GetActiveEffectList()) {
-                    auto it = activeEffectList->begin();
-                    while (it != activeEffectList->end()) {
-                        RE::ActiveEffect* activeEffect = *it;
-                        auto nextIt = std::next(it);
-                        if (activeEffect) {
-                            RE::MagicItem* sourceMagicItem = activeEffect->spell;
-                            if (spellToRemove && sourceMagicItem == spellToRemove) {
-                                SKSE::log::info("[ApplyHitEffects] Dispelando efeito de {}: {}",
-                                                spellToRemove->GetName(),
-                                                activeEffect->GetBaseObject() ? activeEffect->GetBaseObject()->GetName()
-                                                                              : "Nome Inválido");
-                                activeEffect->Dispel(true);
-                            }
+            }
+            break;
+        case AppliedEffect::EffectType::Spell: {
+            RE::SpellItem* spellToRemove = form->As<RE::SpellItem>();
+
+            // Tenta remover efeitos ativos (Dispel)
+            if (auto activeEffectList = actor->AsMagicTarget()->GetActiveEffectList()) {
+                auto it = activeEffectList->begin();
+                while (it != activeEffectList->end()) {
+                    RE::ActiveEffect* activeEffect = *it;
+                    auto nextIt = std::next(it);
+                    if (activeEffect) {
+                        RE::MagicItem* sourceMagicItem = activeEffect->spell;
+                        if (spellToRemove && sourceMagicItem == spellToRemove) {
+                            SKSE::log::info("[ApplyHitEffects] Dispelando efeito de {}: {}",
+                                spellToRemove->GetName(),
+                                activeEffect->GetBaseObject() ? activeEffect->GetBaseObject()->GetName()
+                                : "Nome Inválido");
+                            activeEffect->Dispel(true);
                         }
-                        it = nextIt;
                     }
+                    it = nextIt;
                 }
-                if (spellToRemove && actor->HasSpell(spellToRemove)) {
-                    SKSE::log::info("[ApplyHitEffects] Removendo Spell/Ability: {}", spellToRemove->GetName());
-                    actor->RemoveSpell(spellToRemove);
-                }
-            } break;
-            case AppliedEffect::EffectType::MagicEffect:
-                break;
+            }
+
+            // Remove da lista de magias conhecidas (se for Ability/Lesser Power)
+            if (spellToRemove && actor->HasSpell(spellToRemove)) {
+                SKSE::log::info("[ApplyHitEffects] Removendo Spell/Ability: {}", spellToRemove->GetName());
+                actor->RemoveSpell(spellToRemove);
+            }
+        } break;
+        case AppliedEffect::EffectType::MagicEffect:
+            break;
         }
     }
 
-    // 2. Encontra efeitos para ADICIONAR
+    // -----------------------------------------------------------------------
+    // 3. Encontra efeitos para ADICIONAR (Presentes no novo, mas não no antigo)
+    // -----------------------------------------------------------------------
     std::vector<AppliedEffect> toAdd;
     std::set_difference(newEffects.begin(), newEffects.end(), oldEffects.begin(), oldEffects.end(),
-                        std::back_inserter(toAdd));
+        std::back_inserter(toAdd));
 
     for (const auto& effect : toAdd) {
         RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
@@ -2847,87 +2889,86 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         }
 
         switch (effect.type) {
-            case AppliedEffect::EffectType::Perk:
-                if (auto perk = form->As<RE::BGSPerk>()) {
-                    if (!actor->HasPerk(perk)) {
-                        SKSE::log::info("[ApplyHitEffects] Adicionando Perk: {}", perk->GetName());
-                        actor->AddPerk(perk, 1);
+        case AppliedEffect::EffectType::Perk:
+            if (auto perk = form->As<RE::BGSPerk>()) {
+                if (!actor->HasPerk(perk)) {
+                    SKSE::log::info("[ApplyHitEffects] Adicionando Perk (Trigger: {}): {}",
+                        (trigger == AttackTrigger::Hit ? "Hit" : "Swing"), perk->GetName());
+                    actor->AddPerk(perk, 1);
+                }
+            }
+            break;
+        case AppliedEffect::EffectType::Spell:
+            if (auto spell = form->As<RE::SpellItem>()) {
+                // Se for Habilidade passiva ou Poder Menor, apenas adiciona à lista
+                if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
+                    spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
+                    if (!actor->HasSpell(spell)) {
+                        SKSE::log::info("[ApplyHitEffects] Adicionando Ability/Power: {}", spell->GetName());
+                        actor->AddSpell(spell);
                     }
                 }
-                break;
-            case AppliedEffect::EffectType::Spell:
-                if (auto spell = form->As<RE::SpellItem>()) {
-                    if (spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility ||
-                        spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower) {
-                        if (!actor->HasSpell(spell)) {
-                            SKSE::log::info("[ApplyHitEffects] Adicionando Ability/Power: {}", spell->GetName());
-                            actor->AddSpell(spell);
+                else {
+                    // Se for Spell ativo/instantâneo, tenta castar
+                    SKSE::log::info("[ApplyHitEffects] Tentando castar Spell: {} ({:08X})", spell->GetName(),
+                        spell->GetFormID());
+
+                    if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
+                        RE::MagicSystem::CannotCastReason reason = RE::MagicSystem::CannotCastReason::kOK;
+
+                        bool canCast = true;
+                        if (Settings::MGKRequeriment) {
+                            canCast = actor->CheckCast(spell, false, &reason);
                         }
-                    } else {
-                        // --- INÍCIO DA MODIFICAÇÃO: Lógica copiada de ApplyAndTrackEffects ---
-                        SKSE::log::info("[ApplyHitEffects] Tentando castar Spell: {} ({:08X})", spell->GetName(),
-                                        spell->GetFormID());
 
-                        if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
-                            // Inicializa a razão com OK
-                            RE::MagicSystem::CannotCastReason reason =
-                                RE::MagicSystem::CannotCastReason::kOK;  
-                            if (Settings::MGKRequeriment) {
-                                if (actor->CheckCast(spell, false, &reason)) {
-                                    auto magicItem = form->As<RE::MagicItem>();
-
-                                    // Verificação de segurança: magicItem não deve ser nulo se spell também não era.
-                                    if (!magicItem) {
-                                        SKSE::log::error(
-                                            "Falha ao converter Form para MagicItem, embora seja um SpellItem!");
-                                        return;  
-                                    }
-
-                                    float magickaCost = magicItem->CalculateMagickaCost(actor);
-
-                                    logger::info(
-                                        "[ApplyHitEffects] Custo de Magicka calculado para {}: {}",
-                                                 spell->GetName(), magickaCost);
-
-                                    if (magickaCost > 0.0f) {
-                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka,
-                                                                                     magickaCost);
-                                    }
-
-                                    caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
-                                    SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}",
-                                                    spell->GetName());
-
-                                } else {
-                                    // Se não puder, avisa no log
-                                    SKSE::log::warn("[ApplyHitEffects] Não foi possível castar {}. Razão CheckCast: {}",
-                                                    spell->GetName(), static_cast<int>(reason));
-                                }
-
-                            } else {
-                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                        if (canCast) {
+                            auto magicItem = form->As<RE::MagicItem>();
+                            if (!magicItem) {
+                                SKSE::log::error("Falha ao converter Form para MagicItem!");
+                                continue;
                             }
 
-                           
+                            if (Settings::MGKRequeriment) {
+                                float cost = magicItem->CalculateMagickaCost(actor);
+                                if (cost > 0.0f) {
+                                    switch (effect.costType) {
+                                    case SpellCostType::Magicka:
+                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka, cost);
+                                        break;
+                                    case SpellCostType::Stamina:
+                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kStamina, cost);
+                                        break;
+                                    case SpellCostType::Health:
+                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kHealth, cost);
+                                        break;
+                                    case SpellCostType::None: break;
+                                    };
+                                }
+                            }
 
-                        } else {
-                            SKSE::log::error("[ApplyHitEffects] Não foi possível obter MagicCaster para CastSpellImmediate de {}",
-                                             spell->GetName());
+                            caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                            SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}", spell->GetName());
+
                         }
-                        // --- FIM DA MODIFICAÇÃO ---
+                        else {
+                            SKSE::log::warn("[ApplyHitEffects] Não foi possível castar {}. Razão: {}",
+                                spell->GetName(), static_cast<int>(reason));
+                        }
+                    }
+                    else {
+                        SKSE::log::error("[ApplyHitEffects] MagicCaster não encontrado para {}", spell->GetName());
                     }
                 }
-                break;
-            case AppliedEffect::EffectType::MagicEffect:
-                SKSE::log::warn(
-                    "[ApplyHitEffects] Não é possível adicionar diretamente um MagicEffect ({}). Adicione o Spell pai.",
-                    form->GetName());
-                break;
+            }
+            break;
+        case AppliedEffect::EffectType::MagicEffect:
+            SKSE::log::warn("[ApplyHitEffects] MagicEffect direto não suportado ({}). Use o Spell pai.", form->GetName());
+            break;
         }
     }
 
-    // 3. Atualiza a lista de rastreamento
-    _lastAppliedHitEffects = newEffectsHit;  // Armazena a lista original, não ordenada
+    // 4. Atualiza a lista de rastreamento correta (Hit ou Swing)
+    *pLastAppliedEffects = newEffectsConst;
 }
 
 void GlobalControl::Instakill::thunk(RE::Actor* a_this) { 

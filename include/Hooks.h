@@ -215,7 +215,32 @@ namespace MyMenu {
         {208, "Down Arrow"},
         {209, "PgDown"},
         {210, "Insert"},
-        {211, "Delete"}
+        {211, "Delete"},
+        //{256, "Left Click"},
+        {257, "Right Click"},
+        {258, "Middle Mouse Button"},
+        {259, "Mouse 4"},
+        {260, "Mouse 5"},
+        {261, "Mouse 6"},
+        {262, "Mouse 7"},
+        {263, "Mouse 8"},
+        {55, "Keypad *"},
+        {181, "Keypad /"},
+        {74, "Keypad -"},  // <-- ADICIONADO
+        {78, "Keypad +"},  // <-- ADICIONADO
+        {73, "Keypad 9"},  // <-- ADICIONADO
+        {72, "Keypad 8"},  // <-- ADICIONADO
+        {71, "Keypad 7"},  // <-- ADICIONADO
+        {77, "Keypad 6"},  // <-- ADICIONADO
+        {76, "Keypad 5"},  // <-- ADICIONADO
+        {75, "Keypad 4"},  // <-- ADICIONADO
+        {81, "Keypad 3"},  // <-- ADICIONADO
+        {80, "Keypad 2"},  // <-- ADICIONADO
+        {79, "Keypad 1"},  // <-- ADICIONADO
+        {82, "Keypad 0"},  // <-- ADICIONADO
+        {83, "Keypad ."},  // <-- ADICIONADO
+        {261, "Scroll Up"},
+        {262, "Scroll Down"}
         // Adicionei a key 0 para o caso "Nenhuma" para simplificar.
     };
 

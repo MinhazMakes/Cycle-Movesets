@@ -43,6 +43,9 @@ struct AvailableItem {
     int originalIndex;  // O índice real (1-based) que o OAR espera
 };
 
+enum class SpellCostType { Magicka, Stamina, Health, None };
+enum class AttackTrigger { Hit, Swing };
+
 struct AppliedEffect {
     enum class EffectType { Perk, MagicEffect, Spell };
 
@@ -50,7 +53,7 @@ struct AppliedEffect {
     std::string pluginName;
     RE::FormID formID;
     std::string origin = "";  // "Stance", "Moveset", "SubMoveset" (para rastreamento na UI)
-
+    SpellCostType costType = SpellCostType::Magicka;
     // Necessário para usar std::set ou std::unique mais tarde
     bool operator<(const AppliedEffect& other) const {
         if (formID != other.formID) return formID < other.formID;
@@ -106,14 +109,13 @@ struct HitCountRule {
     std::vector<PerkDef> perks;
     std::vector<AppliedEffect> effects;
     bool isPeriodic = false;
-
+    AttackTrigger trigger = AttackTrigger::Hit;
     // Operador para ordenação (útil para a UI)
     bool operator<(const HitCountRule& other) const { return hitCount < other.hitCount; }
 };
 
 // --- Estruturas de Configuração do Usuário ---
 struct SubAnimationInstance {
-    // --- ALTERADO: Usamos nomes para salvar/carregar. Os índices serão preenchidos em tempo de execução. ---
     std::string sourceModName;  // Nome do mod de origem (e.g., "BFCO")
     std::string sourceSubName;  // Nome da sub-animação de origem (e.g., "700036")
     size_t sourceModIndex;

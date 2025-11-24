@@ -57,8 +57,8 @@ public:
                                                     int stanceOriginalIndex);
     void LoadGameDataForEffects();
     bool _isStanceManagementPopupOpen = false;
-    void OnHit(RE::Actor* actor, int hitCount);
-    void ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& effects);
+    void OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigger);
+    void ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& effects, AttackTrigger trigger);
     
 private:
     std::vector<PerkDef> _perksToDisplayInPopup;
@@ -97,6 +97,7 @@ private:
     std::vector<HitCountRule>* _hitRuleListOwner = nullptr;  // Ponteiro para o vetor (da stance/moveset) que estamos editando
     std::vector<HitCountRule> _inheritedHitRules;
     std::vector<AppliedEffect> _lastAppliedHitEffects;
+    std::vector<AppliedEffect> _lastAppliedSwingEffects;
     bool _isCreatingPeriodicHitRule = false;
     
     
