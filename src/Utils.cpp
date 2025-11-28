@@ -2481,7 +2481,7 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                         logger::info("Slot [{}]: Vazio", slotName);
                     }
                 };
-
+                RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
                 // Logar os três slots que você pediu
                 logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
                 logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
@@ -2516,7 +2516,7 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
     if (weapon && originalSlot) {
         weapon->SetEquipSlot(originalSlot);  // Restaura para 2H
     }
-
+    RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
     return result;
 }
 

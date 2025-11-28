@@ -7673,11 +7673,11 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         ImGui::TableHeadersRow();
 
                         std::sort(_inheritedHitRules.begin(), _inheritedHitRules.end());
-                        _inheritedHitRules.erase(std::unique(_inheritedHitRules.begin(), _inheritedHitRules.end(),
+                        /*_inheritedHitRules.erase(std::unique(_inheritedHitRules.begin(), _inheritedHitRules.end(),
                                                              [](const HitCountRule& a, const HitCountRule& b) {
                                                                  return a.hitCount == b.hitCount;
                                                              }),
-                                                 _inheritedHitRules.end());
+                                                 _inheritedHitRules.end());*/
 
                         for (const auto& rule : _inheritedHitRules) {
                             if (rule.isPeriodic) {
@@ -7987,19 +7987,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
                 } else if (!_hitRuleListOwner) {
                     hit_count_error_msg = "Error: Rule owner is not set.";
                 } else {
-                    // Verifica se já existe uma regra com esse número
-                    bool exists = false;
-                    for (const auto& rule : *_hitRuleListOwner) {
-                        if (rule.hitCount == _hitCountRuleEditorHitNumber &&
-                            rule.isPeriodic == _isCreatingPeriodicHitRule) {
-                            exists = true;
-                            break;
-                        }
-                    }
-
-                    if (exists) {
-                        hit_count_error_msg = "A rule for this hit count already exists.";
-                    } else {
+                   
                         // --- SUCESSO ---
                         hit_count_error_msg = "";  // Limpa erro
 
@@ -8032,7 +8020,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
 
                         _isHitCountNumberPopupOpen = false;  // Fecha este popup
                         ImGui::CloseCurrentPopup();
-                    }
+                    
                 }
             }
         }
@@ -8052,20 +8040,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
             } else if (!_hitRuleListOwner) {
                 hit_count_error_msg = "Error: Rule owner is not set.";
             } else {
-                // Verifica se já existe uma regra com esse número
-                bool exists = false;
-                for (const auto& rule : *_hitRuleListOwner) {
-                    if (rule.hitCount == _hitCountRuleEditorHitNumber &&
-                        rule.isPeriodic == _isCreatingPeriodicHitRule) {
-                        exists = true;
-                        break;
-                    }
-                }
-
-                if (exists) {
-                    hit_count_error_msg = "A rule for this hit count already exists.";
-                } else {
-                    // --- SUCESSO ---
+                
                     hit_count_error_msg = "";  // Limpa erro
 
                     HitCountRule newRule;
@@ -8098,7 +8073,7 @@ void AnimationManager::DrawHitCountNumberPopup() {
 
                     _isHitCountNumberPopupOpen = false;  // Fecha este popup
                     ImGui::CloseCurrentPopup();
-                }
+                
             }
         }
         ImGui::SameLine();
