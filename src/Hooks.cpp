@@ -16,10 +16,15 @@
 
 
 std::string PathToUTF8(const std::filesystem::path& path) {
-    auto u8str = path.u8string();
+    // Força a conversão para u8string (UTF-8 nativo do filesystem)
+    const auto u8str = path.u8string();
+    // Faz o cast seguro para std::string
     return std::string(reinterpret_cast<const char*>(u8str.c_str()), u8str.length());
 }
-
+std::filesystem::path PathFromUTF8(const std::string& str) {
+    // Reconstrói o path assumindo que a string de entrada é UTF-8
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(str.c_str()), str.length()));
+}
     // Função auxiliar para copiar um único arquivo com logs
     void CopySingleFile(const std::filesystem::path& sourceFile, const std::filesystem::path& destinationPath,
                         int& filesCopied) {
@@ -28,7 +33,7 @@ std::string PathToUTF8(const std::filesystem::path& path) {
                                        std::filesystem::copy_options::overwrite_existing);
             filesCopied++;
         } catch (const std::filesystem::filesystem_error& e) {
-            SKSE::log::error("Falha ao copiar arquivo: {}. Erro: {}", sourceFile.string(), e.what());
+            SKSE::log::error("Falha ao copiar arquivo: {}. Erro: {}", PathToUTF8(sourceFile), e.what());
         }
     }
 
@@ -67,7 +72,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                 std::filesystem::path destinationPath = cycleDarJsonPath.parent_path();
                 for (const auto& fileEntry : std::filesystem::directory_iterator(destinationPath)) {
                     if (fileEntry.is_regular_file()) {
-                        std::string filename = fileEntry.path().filename().string();
+                        std::string filename = PathToUTF8(fileEntry.path().filename());
                         std::string lower_filename = filename;
                         // 2. Converte a cópia para minúsculas.
                         std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
@@ -230,8 +235,8 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
        // Itera sobre todos os arquivos na pasta para encontrar tags de animação
         for (const auto& fileEntry : std::filesystem::directory_iterator(subAnimPath)) {
             if (fileEntry.is_regular_file()) {
-                std::string extension = fileEntry.path().extension().string();
-                std::string filename = fileEntry.path().filename().string();
+                std::string extension = PathToUTF8(fileEntry.path().extension());
+                std::string filename = PathToUTF8(fileEntry.path().filename());
                 std::string lowerFilename = filename;
                 std::transform(lowerFilename.begin(), lowerFilename.end(), lowerFilename.begin(), ::tolower);
                 std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
@@ -519,8 +524,8 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                 std::filesystem::create_directories(fallbackRootPath);
             }
         } catch (const std::filesystem::filesystem_error& e) {
-            SKSE::log::error("Falha ao criar o diretório raiz de fallback: {}. Erro: {}", fallbackRootPath.string(),
-                             e.what());
+            SKSE::log::error("Falha ao criar o diretório raiz de fallback: {}. Erro: {}", PathToUTF8(fallbackRootPath),
+                e.what());
             return;
         }
 
@@ -556,7 +561,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
         for (const auto& categoryPair : _categories) {
             const WeaponCategory& category = categoryPair.second;
 
-            // O jogador SEMPRE tem 4 stances (índices 0 a 3)
+            
             for (int i = 0; i < category.instances.size(); ++i) {
                 const CategoryInstance& instance = category.instances[i];
                 // Se não houver nenhum moveset configurado para esta stance, não há necessidade de criar uma pasta de
@@ -572,7 +577,9 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
 
                     // 3. CRIAÇÃO DA PASTA ÚNICA PARA O MOVESET
                     std::string sanitizedModName = sourceMod.name;
-                    std::ranges::replace_if(sanitizedModName, [](char c) { return !isalnum(c); }, '_');
+                    std::ranges::replace_if(sanitizedModName, [](char c) {
+                        return !std::isalnum(static_cast<unsigned char>(c));
+                        }, '_');
 
                     std::string fallbackFolderName =
                         std::format("Fallback_{}_{}_P{}_{}", category.name, i, playlistCounter, sanitizedModName);
@@ -581,8 +588,8 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                     try {
                         std::filesystem::create_directory(fallbackMovesetPath);
                     } catch (const std::filesystem::filesystem_error& e) {
-                        SKSE::log::error("Falha ao criar o diretório de fallback do moveset: {}. Erro: {}",
-                                         fallbackMovesetPath.string(), e.what());
+                        logger::error("Falha ao criar o diretório de fallback do moveset: {}. Erro: {}",
+                            PathToUTF8(fallbackMovesetPath), e.what());
                         playlistCounter++;
                         continue;
                     }
@@ -618,12 +625,17 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                             std::filesystem::is_directory(sourceDirectory)) {
                             for (const auto& fileEntry : std::filesystem::directory_iterator(sourceDirectory)) {
                                 if (fileEntry.is_regular_file() && fileEntry.path().extension() == ".hkx") {
-                                    std::string filename = fileEntry.path().filename().string();
-                                    // A condição principal: só copia se o arquivo ainda não foi copiado (dando
-                                    // prioridade ao pai)
-                                    if (copiedFiles.find(filename) == copiedFiles.end()) {
-                                        CopySingleFile(fileEntry.path(), fallbackMovesetPath, filesCopiedCount);
-                                        copiedFiles.insert(filename);
+                                    std::string ext = PathToUTF8(fileEntry.path().extension());
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+                                    if (ext == ".hkx") {
+                                        // CORREÇÃO: Nome do arquivo seguro
+                                        std::string filename = PathToUTF8(fileEntry.path().filename());
+
+                                        if (copiedFiles.find(filename) == copiedFiles.end()) {
+                                            CopySingleFile(fileEntry.path(), fallbackMovesetPath, filesCopiedCount);
+                                            copiedFiles.insert(filename);
+                                        }
                                     }
                                 }
                             }
@@ -3669,8 +3681,8 @@ void ParseHitRulesJson(const rapidjson::Value& sourceObject, const std::string& 
                             animObj.AddMember("hasDPA_R", animOriginSub.dpaTags.hasR, allocator);
                             animObj.AddMember("hasCPA", animOriginSub.hasCPA, allocator);
                             animObj.AddMember("sourceConfigPath",
-                                              rapidjson::Value(animOriginSub.path.string().c_str(), allocator),
-                                              allocator);
+                                rapidjson::Value(PathToUTF8(animOriginSub.path).c_str(), allocator),
+                                allocator);
                             animObj.AddMember("pFront", subInst.pFront, allocator);
                             animObj.AddMember("pBack", subInst.pBack, allocator);
                             animObj.AddMember("pLeft", subInst.pLeft, allocator);
@@ -3910,7 +3922,7 @@ void AnimationManager::LoadCycleMovesets() {
                             std::string configPathStr = animJson["sourceConfigPath"].GetString();
                             if (configPathStr.empty()) continue;
 
-                            auto indicesOpt = FindSubAnimationByPath(std::filesystem::u8path(configPathStr));
+                            auto indicesOpt = FindSubAnimationByPath(PathFromUTF8(configPathStr));
                             if (!indicesOpt) {
                                 SKSE::log::warn(
                                     "Não foi possível encontrar a animação para o config/path: {}. Pode ter sido "
@@ -4897,7 +4909,7 @@ void AnimationManager::LoadCycleMovesets() {
                         _stanceIndexToDelete = _stanceIndexToEdit;
 
                         // 2. Fecha o Popup Pai (Management) logicamente
-                        _isStanceManagementPopupOpen = false;
+                        _isStanceManagementPopupOpen = false; // NÃO REMOVER ISSO NAO ESQUECE PELO AMOR DE DEUS
 
                         // 3. Fecha o Popup Atual (Confirm) tecnicamente no ImGui
                         ImGui::CloseCurrentPopup();
