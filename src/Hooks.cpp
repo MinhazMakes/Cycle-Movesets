@@ -3406,7 +3406,7 @@ void ParseEffectListJson(const rapidjson::Value& sourceObject, const std::string
     const auto& effectArray = sourceObject[keyName.c_str()].GetArray();
     for (const auto& effectData : effectArray) {
         // Verifica se tem 4 elementos e os tipos corretos
-        if (effectData.IsArray() && effectData.Size() == 4 && effectData[0].IsString() && effectData[1].IsString() &&
+        if (effectData.IsArray() && effectData.Size() >= 4 && effectData[0].IsString() && effectData[1].IsString() &&
             effectData[2].IsUint() && effectData[3].IsString()) {
             std::string typeStr = effectData[0].GetString();
             AppliedEffect::EffectType type = AppliedEffect::EffectType::Perk;  // Padrão
@@ -4892,11 +4892,16 @@ void AnimationManager::LoadCycleMovesets() {
                 ImGui::Text("Are you sure you want to delete this stance?\nAll movesets inside it will be lost.");
                 if (ImGui::Button("Yes, Delete It", ImVec2(200, 0))) {
                     if (_categoryToEdit && _stanceIndexToEdit != -1 && _categoryToEdit->instances.size() > 1) {
+                        // 1. Marca para deletar na próxima frame de DrawCategoryUI
                         _categoryToApplyDeletion = _categoryToEdit;
                         _stanceIndexToDelete = _stanceIndexToEdit;
+
+                        // 2. Fecha o Popup Pai (Management) logicamente
+                        _isStanceManagementPopupOpen = false;
+
+                        // 3. Fecha o Popup Atual (Confirm) tecnicamente no ImGui
+                        ImGui::CloseCurrentPopup();
                     }
-                    ImGui::CloseCurrentPopup();  // Fecha o "Confirm"
-                    ImGui::CloseCurrentPopup();  // Fecha o "Management"
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0))) {
@@ -7289,6 +7294,40 @@ void AnimationManager::DrawConditionsEffectsPopup() {
         bool isEditing2HConfig = _editingPlayer2HPerks || _editingNPC2HPerks || _editingNPCDual2HPerks;
         bool isEditingHitRule = (_hitRuleToEdit != nullptr);
 
+        if (isEditingHitRule && _hitRuleToEdit) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+            ImGui::Text("Editing Hit Rule Configuration");
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // 1. Hit Count
+            ImGui::PushItemWidth(200);
+            if (ImGui::InputInt("Count", &_hitRuleToEdit->hitCount, 1, 5)) {
+                if (_hitRuleToEdit->hitCount < 1) _hitRuleToEdit->hitCount = 1;
+            }
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The number of hits required (or interval if periodic).");
+
+            if (_hitRuleToEdit->isPeriodic) {
+                // 2. Trigger Type (Hit vs Swing)
+                int currentTrigger = static_cast<int>(_hitRuleToEdit->trigger);
+                ImGui::SameLine(350);
+                ImGui::PushItemWidth(150);
+                const char* triggers[] = { "On Hit", "On Swing" };
+                if (ImGui::Combo("Trigger", &currentTrigger, triggers, 2)) {
+                    _hitRuleToEdit->trigger = static_cast<AttackTrigger>(currentTrigger);
+                }
+                ImGui::PopItemWidth();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
         // Carrega/Prepara os dados quando o popup aparece
         if (ImGui::IsWindowAppearing()) {
             // Perks: Limpa e preenche _perksToDisplayInPopup e _inheritedPerkFormIDs
@@ -7455,12 +7494,12 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                     ImGui::InputText("Filter Name/EditorID", _effectFilter, sizeof(_effectFilter));  // Use LOC(...)
                     ImGui::SameLine();
 
-                    // --- INÍCIO DA CORREÇÃO: Adiciona "Selected" ao combo ---
+                    
                     const char* types[] = {"All Types", "Perks", "Spells", "Selected"};
                     ImGui::PushItemWidth(150);
                     ImGui::Combo("Filter Type", &_effectTypeFilter, types, 4);  // Alterado de 3 para 4
                     ImGui::PopItemWidth();
-                    // --- FIM DA CORREÇÃO ---
+                    
 
                     ImGui::Separator();
 
@@ -7469,7 +7508,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         std::string filter_str = _effectFilter;
                         std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
 
-                        // --- INÍCIO DA CORREÇÃO: Lógica draw_list removida do stable_partition ---
+                       
                         auto draw_list = [&](const auto& sourceList, AppliedEffect::EffectType type,
                                              const char* typeLabel) {
                             for (const auto& item : sourceList) {
@@ -7629,7 +7668,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                             if (_effectTypeFilter == 0 || _effectTypeFilter == 2)
                                 draw_list(_allSpells, AppliedEffect::EffectType::Spell, "Spell");
                         }
-                        // --- FIM DA CORREÇÃO ---
+                        
                     }
                     ImGui::EndChild();
                     ImGui::Separator();
@@ -7770,9 +7809,9 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                     if (ImGui::Button("Add Periodic Rule")) {
                         _isConditionsEffectsPopupOpen = false;
-                        if (_hitRuleListOwner) {  // <-- ADICIONAR: Checagem de segurança
+                        if (_hitRuleListOwner) {  
                             _hitCountRuleEditorHitNumber = 0;
-                            _isCreatingPeriodicHitRule = true;  // <-- ADICIONAR: Define o tipo a ser criado
+                            _isCreatingPeriodicHitRule = true;  
                             _isHitCountNumberPopupOpen = true;
                             _hitRuleToEdit = nullptr;
                         } else {
@@ -7792,7 +7831,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                         // 1. Renderizar Regras Herdadas
                         for (const auto& rule : _inheritedHitRules) {
-                            // <-- CORREÇÃO: Filtra regras que não são deste tipo
+                            
                             if (!rule.isPeriodic) {
                                 continue;
                             }
@@ -7826,7 +7865,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                             for (auto it = _hitRuleListOwner->begin(); it != _hitRuleListOwner->end();) {
                                 auto& rule = *it;
 
-                                // <-- CORREÇÃO: Filtra regras que não são deste tipo
+                                
                                 if (!rule.isPeriodic) {
                                     ++it;
                                     continue;
@@ -7866,7 +7905,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                         ImGui::EndTable();
                     }
-                    // <-- FIM DA TABELA FALTANTE -->
+                    
 
                     ImGui::EndTabItem();
                 }

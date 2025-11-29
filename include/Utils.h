@@ -145,8 +145,8 @@ namespace GlobalControl {
         std::span<const SkyPromptAPI::Prompt> GetPrompts() const override; 
         mutable SkyPromptAPI::Prompt Left_Hand{"Left hand", 0, 0, SkyPromptAPI::PromptType::kSinglePress};
         mutable SkyPromptAPI::Prompt Right_Hand{"Right Hand", 1, 0, SkyPromptAPI::PromptType::kSinglePress};
-        mutable SkyPromptAPI::Prompt Both_Hands{"Both Hands", 2, 0, SkyPromptAPI::PromptType::kSinglePress};
-        mutable std::array<SkyPromptAPI::Prompt, 3> prompts = {Left_Hand, Right_Hand, Both_Hands};
+        mutable SkyPromptAPI::Prompt Both_Hands{"Both Hands", 0, 0, SkyPromptAPI::PromptType::kSinglePress};
+        mutable std::array<SkyPromptAPI::Prompt, 1> prompts = {Both_Hands};
         // Função chamada quando um evento (ex: pressionar tecla) ocorre
         void ProcessEvent(SkyPromptAPI::PromptEvent event) const override;
         mutable bool except = false;

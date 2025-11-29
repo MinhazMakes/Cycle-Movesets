@@ -17,6 +17,9 @@ constexpr uint32_t D_KEY = 0x20;
 int GlobalControl::g_directionalState = 0;
 static std::atomic<int> g_effectUpdateGeneration = 0;
 constexpr int kEffectApplyDelayMS = 400;
+static RE::TESObjectWEAP* g_modified2HWeapon = nullptr;
+static RE::BGSEquipSlot* g_original2HSlot = nullptr;
+
 void ScheduleDelayedEffectUpdate(RE::Actor* actor, std::vector<AppliedEffect> newStanceEffects,
                                  std::vector<AppliedEffect> newMovesetEffects, bool updateStance, bool updateMoveset) {
     // Incrementa a geração. Qualquer thread anterior dormindo vai perceber que o ID mudou e abortar.
@@ -99,6 +102,38 @@ void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGS
 
     auto equipManager = RE::ActorEquipManager::GetSingleton();
     if (!equipManager) return;
+    auto rightHandItem = actor->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
+    auto leftHandItem = actor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
+    // Nota: twoHandItem é usado apenas para checagem de destino 2H agora
+    auto twoHandItem = actor->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
+
+    // 2. Contagem de itens
+    auto inventory = actor->GetInventory();
+    auto it = inventory.find(item);
+    int itemCount = (it != inventory.end()) ? it->second.first : 0;
+
+    // --- LÓGICA DE PROTEÇÃO CONTRA DUPLICAÇÃO ---
+
+    // CASO A: Destino é MÃO DIREITA (Grip Change ou Troca de mão)
+    if (targetSlot == Hooks::g_rightHandSlot) {
+        if (leftHandItem == item && itemCount <= 1) {
+            equipManager->UnequipObject(actor, item, nullptr, 1, Hooks::g_leftHandSlot, false, true, true);
+        }
+    }
+
+    // CASO B: Destino é MÃO ESQUERDA
+    else if (targetSlot == Hooks::g_leftHandSlot) {
+        // Se está na DIREITA, removemos (Troca de mão)
+        if (rightHandItem == item && itemCount <= 1) {
+            equipManager->UnequipObject(actor, item, nullptr, 1, Hooks::g_rightHandSlot, false, true, true);
+        }
+    }
+
+    // CASO C: Destino é SLOT DE DUAS MÃOS (Retornar ao normal)
+    else if (targetSlot == Hooks::g_twoHandSlot) {
+            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, true, false);
+            equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, true, false);
+    }
 
     equipManager->EquipObject(actor, item, nullptr, 1, targetSlot);
     RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
@@ -1756,6 +1791,8 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
             SkyPromptAPI::RemovePrompt(StancesSink::GetSingleton(), g_clientID);
             SkyPromptAPI::RemovePrompt(MovesetSink::GetSingleton(), g_clientID);
         }
+        auto player = RE::PlayerCharacter::GetSingleton();
+        
     }
     // Se um menu está FECHANDO
     else {
@@ -1766,6 +1803,7 @@ RE::BSEventNotifyControl GlobalControl::MenuOpen::ProcessEvent(const RE::MenuOpe
             SkyPromptAPI::SendPrompt(StancesSink::GetSingleton(), g_clientID);
             SkyPromptAPI::SendPrompt(MovesetSink::GetSingleton(), g_clientID);
         }
+        
     }
     
     return RE::BSEventNotifyControl::kContinue;
@@ -2360,15 +2398,6 @@ void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) con
     switch (event.prompt.eventID) {
         case 0:  // Equipar na mão ESQUERDA
             //logger::info("Equipando {} na mão esquerda.", itemToEquip->GetName());
-            EquipItemWithGripChange(player, itemToEquip, Hooks::g_leftHandSlot);
-            break;
-
-        case 1:  // Equipar na mão DIREITA
-            //logger::info("Equipando {} na mão direita.", itemToEquip->GetName());
-            EquipItemWithGripChange(player, itemToEquip, Hooks::g_rightHandSlot);
-            break;
-        case 2:  // Equipar nas duas mãos
-            //logger::info("Equipando {} nas duas maos.", itemToEquip->GetName());
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_twoHandSlot);
             break;
     }
@@ -2404,7 +2433,7 @@ RE::BSEventNotifyControl GlobalControl::EquipEventSink::ProcessEvent(const RE::T
     if (!a_event || a_event->actor.get() != player || !a_event->equipped) {
         return RE::BSEventNotifyControl::kContinue;
     }
-
+    RE::SendUIMessage::SendInventoryUpdateMessage(player, nullptr);
     return RE::BSEventNotifyControl::kContinue;
 }
 
@@ -2481,20 +2510,22 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                         logger::info("Slot [{}]: Vazio", slotName);
                     }
                 };
-                RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
-                // Logar os três slots que você pediu
+                
+                
                 logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
                 logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
                 logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
 
                 logger::info("-------------------------------------------------");
             }
+            
             return;
         }
     }
 
-    
+    RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
     return func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, forceEquip, playSounds, applyNow);
+    
 }
 
 std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form,
@@ -2506,7 +2537,14 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
     if (a_form && a_form->IsWeapon() && isTwoHanded(a_form)) {
         weapon = a_form->As<RE::TESObjectWEAP>();
         originalSlot = weapon->GetEquipSlot();
-        weapon->SetEquipSlot(Hooks::g_rightHandSlot);  // Finge que é 1H para desequipar
+        auto leftItem = a_actor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
+
+        if (leftItem == a_form) {
+            weapon->SetEquipSlot(Hooks::g_leftHandSlot);
+        }
+        else {
+            weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+        }
     }
 
     // 2. CHAMAR A FUNÇÃO ORIGINAL DO JOGO
@@ -2516,8 +2554,10 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
     if (weapon && originalSlot) {
         weapon->SetEquipSlot(originalSlot);  // Restaura para 2H
     }
+
     RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
     return result;
+    
 }
 
 RE::TESIdleForm* GetIdleByFormID(RE::FormID a_formID, const std::string& a_pluginName) {
