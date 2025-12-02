@@ -556,142 +556,181 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
                 SKSE::log::error("Falha ao criar o config.json raiz para a pasta de fallback!");
             }
         }
-
+        SKSE::log::info("Iniciando loop de categorias...");
         // Processa tanto as categorias do jogador quanto as de todas as regras de NPC
         for (const auto& categoryPair : _categories) {
             const WeaponCategory& category = categoryPair.second;
 
-            
+            // LOG DE RASTREIO 1: Entrando na categoria
+            SKSE::log::info(">> Processando Categoria: {}", category.name);
+
+            // Verificação de segurança do vetor
+            if (category.instances.empty()) {
+                SKSE::log::info("   [INFO] Categoria {} nao tem stances configuradas. Pulando.", category.name);
+                continue;
+            }
+
+            // LOG DE RASTREIO 2: Tamanho do vetor
+            SKSE::log::info("   [DEBUG] Numero de stances (instances): {}", category.instances.size());
+
             for (int i = 0; i < category.instances.size(); ++i) {
-                const CategoryInstance& instance = category.instances[i];
-                // Se não houver nenhum moveset configurado para esta stance, não há necessidade de criar uma pasta de
-                // fallback para ela.
-                int playlistCounter = 1;
-                for (const auto& modInst : instance.modInstances) {
-                    if (!modInst.isSelected) {
-                        playlistCounter++;  // Incrementa o contador mesmo se o moveset for pulado
-                        continue;
+                // LOG DE RASTREIO 3: Iterando stance
+                SKSE::log::info("   >> Checando Stance Index: {}", i);
+
+                try {
+                    const CategoryInstance& instance = category.instances[i];
+
+                    // Verificação de segurança
+                    if (instance.modInstances.empty()) {
+                        continue; // Stance vazia, pula
                     }
 
-                    const auto& sourceMod = _allMods[modInst.sourceModIndex];
+                    int playlistCounter = 1;
+                    for (size_t m = 0; m < instance.modInstances.size(); ++m) {
+                        const auto& modInst = instance.modInstances[m];
 
-                    // 3. CRIAÇÃO DA PASTA ÚNICA PARA O MOVESET
-                    std::string sanitizedModName = sourceMod.name;
-                    std::ranges::replace_if(sanitizedModName, [](char c) {
-                        return !std::isalnum(static_cast<unsigned char>(c));
-                        }, '_');
-
-                    std::string fallbackFolderName =
-                        std::format("Fallback_{}_{}_P{}_{}", category.name, i, playlistCounter, sanitizedModName);
-                    std::filesystem::path fallbackMovesetPath = fallbackRootPath / fallbackFolderName;
-
-                    try {
-                        std::filesystem::create_directory(fallbackMovesetPath);
-                    } catch (const std::filesystem::filesystem_error& e) {
-                        logger::error("Falha ao criar o diretório de fallback do moveset: {}. Erro: {}",
-                            PathToUTF8(fallbackMovesetPath), e.what());
-                        playlistCounter++;
-                        continue;
-                    }
-
-                    // 4. LÓGICA DE CÓPIA COM PRIORIDADE PARA O PAI
-                    std::set<std::string> copiedFiles;
-                    int filesCopiedCount = 0;
-
-                    // Separa os sub-movesets em pais e filhos para dar prioridade
-                    std::vector<const SubAnimationInstance*> parentSubInsts;
-                    std::vector<const SubAnimationInstance*> childSubInsts;
-                    for (const auto& subInst : modInst.subAnimationInstances) {
-                        if (!subInst.isSelected) continue;
-
-                        bool isParent = !(subInst.pFront || subInst.pBack || subInst.pLeft || subInst.pRight ||
-                                          subInst.pFrontRight || subInst.pFrontLeft || subInst.pBackRight ||
-                                          subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
-
-                        if (isParent) {
-                            parentSubInsts.push_back(&subInst);
-                        } else {
-                            childSubInsts.push_back(&subInst);
+                        if (!modInst.isSelected) {
+                            playlistCounter++;
+                            continue;
                         }
-                    }
 
-                    // Função auxiliar para copiar os arquivos de um sub-moveset
-                    auto copySubMovesetFiles = [&](const SubAnimationInstance* subInst) {
-                        const auto& sourceSubAnim =
-                            _allMods[subInst->sourceModIndex].subAnimations[subInst->sourceSubAnimIndex];
-                        std::filesystem::path sourceDirectory = sourceSubAnim.path.parent_path();
+                        // --- PROTEÇÃO 1: Índice do Mod ---
+                        if (modInst.sourceModIndex >= _allMods.size()) {
+                            SKSE::log::warn("      [AVISO] Stance {} referencia ModIndex {} inexistente. Ignorando.", i, modInst.sourceModIndex);
+                            playlistCounter++;
+                            continue;
+                        }
 
-                        if (std::filesystem::exists(sourceDirectory) &&
-                            std::filesystem::is_directory(sourceDirectory)) {
-                            for (const auto& fileEntry : std::filesystem::directory_iterator(sourceDirectory)) {
-                                if (fileEntry.is_regular_file() && fileEntry.path().extension() == ".hkx") {
-                                    std::string ext = PathToUTF8(fileEntry.path().extension());
-                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        const auto& sourceMod = _allMods[modInst.sourceModIndex];
 
-                                    if (ext == ".hkx") {
-                                        // CORREÇÃO: Nome do arquivo seguro
-                                        std::string filename = PathToUTF8(fileEntry.path().filename());
+                        // --- PROTEÇÃO 2: Nome do Mod ---
+                        if (sourceMod.name.empty()) {
+                            SKSE::log::warn("      [AVISO] ModIndex {} tem nome vazio. Ignorando.", modInst.sourceModIndex);
+                            playlistCounter++;
+                            continue;
+                        }
 
-                                        if (copiedFiles.find(filename) == copiedFiles.end()) {
-                                            CopySingleFile(fileEntry.path(), fallbackMovesetPath, filesCopiedCount);
-                                            copiedFiles.insert(filename);
+                        // Sanitização
+                        std::string sanitizedModName = sourceMod.name;
+                        std::ranges::replace_if(sanitizedModName, [](char c) {
+                            return !std::isalnum(static_cast<unsigned char>(c));
+                            }, '_');
+
+                        // Formatação do nome da pasta
+                        std::string fallbackFolderName;
+                        try {
+                            fallbackFolderName = std::format("Fallback_{}_{}_P{}_{}", category.name, i, playlistCounter, sanitizedModName);
+                        }
+                        catch (...) {
+                            SKSE::log::error("      [ERRO] Falha ao formatar nome da pasta. Usando nome generico.");
+                            fallbackFolderName = std::format("Fallback_{}_{}_P{}_Generic", category.name, i, playlistCounter);
+                        }
+
+                        std::filesystem::path fallbackMovesetPath = fallbackRootPath / fallbackFolderName;
+
+                        // Criação da pasta
+                        try {
+                            if (!std::filesystem::exists(fallbackMovesetPath)) {
+                                std::filesystem::create_directories(fallbackMovesetPath);
+                            }
+                        }
+                        catch (const std::filesystem::filesystem_error& e) {
+                            SKSE::log::error("      [ERRO] Falha ao criar pasta {}: {}", PathToUTF8(fallbackMovesetPath), e.what());
+                            playlistCounter++;
+                            continue;
+                        }
+
+                        // Cópia dos arquivos
+                        int filesCopiedCount = 0;
+                        std::set<std::string> copiedFiles;
+
+                        // Função lambda de cópia (definida aqui para capturar contexto)
+                        auto copyFilesFromSubAnim = [&](const SubAnimationInstance& subInst) {
+                            // Check Mod Index
+                            if (subInst.sourceModIndex >= _allMods.size()) return;
+                            const auto& mod = _allMods[subInst.sourceModIndex];
+
+                            // Check SubAnim Index
+                            if (subInst.sourceSubAnimIndex >= mod.subAnimations.size()) return;
+                            const auto& sourceSubAnim = mod.subAnimations[subInst.sourceSubAnimIndex];
+
+                            std::filesystem::path sourceDir = sourceSubAnim.path.parent_path();
+                            if (std::filesystem::exists(sourceDir)) {
+                                for (const auto& entry : std::filesystem::directory_iterator(sourceDir)) {
+                                    if (entry.is_regular_file()) {
+                                        std::string ext = PathToUTF8(entry.path().extension());
+                                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                        if (ext == ".hkx") {
+                                            std::string fname = PathToUTF8(entry.path().filename());
+                                            if (copiedFiles.find(fname) == copiedFiles.end()) {
+                                                CopySingleFile(entry.path(), fallbackMovesetPath, filesCopiedCount);
+                                                copiedFiles.insert(fname);
+                                            }
                                         }
                                     }
                                 }
                             }
+                            };
+
+                        // Executa cópia para pais e filhos
+                        for (const auto& subInst : modInst.subAnimationInstances) {
+                            if (!subInst.isSelected) continue;
+                            // Prioriza pais (não-direcionais) na lógica se necessário, mas aqui copiamos tudo
+                            // A ordem de cópia não importa tanto quanto a existência do arquivo
+                            copyFilesFromSubAnim(subInst);
                         }
-                    };
 
-                    // Primeiro, copia os arquivos de todos os pais
-                    for (const auto* parent : parentSubInsts) {
-                        copySubMovesetFiles(parent);
-                    }
-                    // Depois, copia os arquivos dos filhos (que ainda não existirem)
-                    for (const auto* child : childSubInsts) {
-                        copySubMovesetFiles(child);
-                    }
+                        // Geração do config.json
+                        if (filesCopiedCount > 0) {
+                            rapidjson::Document doc;
+                            doc.SetObject();
+                            auto& allocator = doc.GetAllocator();
 
-                    // 5. GERAÇÃO DO CONFIG.JSON PARA O MOVESET
-                    if (filesCopiedCount > 0) {
-                        rapidjson::Document doc;
-                        doc.SetObject();
-                        auto& allocator = doc.GetAllocator();
+                            doc.AddMember("name", rapidjson::Value(fallbackFolderName.c_str(), allocator), allocator);
+                            doc.AddMember("priority", 2095000000, allocator);
+                            doc.AddMember("isCycleMovesetFallback", true, allocator);
 
-                        doc.AddMember("name", rapidjson::Value(fallbackFolderName.c_str(), allocator), allocator);
-                        doc.AddMember("priority", 2095000000, allocator);  // Prioridade intermediária
-                        doc.AddMember("isCycleMovesetFallback", true, allocator);
+                            rapidjson::Value conditions(rapidjson::kArrayType);
+                            rapidjson::Value masterAndBlock(rapidjson::kObjectType);
+                            masterAndBlock.AddMember("condition", "AND", allocator);
+                            rapidjson::Value andConditions(rapidjson::kArrayType);
 
-                        rapidjson::Value conditions(rapidjson::kArrayType);
-                        rapidjson::Value masterAndBlock(rapidjson::kObjectType);
-                        masterAndBlock.AddMember("condition", "AND", allocator);
-                        rapidjson::Value andConditions(rapidjson::kArrayType);
+                            AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false, allocator);
+                            AddCompareValuesCondition(andConditions, "cycle_instance", i + 1, allocator);
+                            AddFullCategoryConditions(andConditions, category, allocator);
+                            AddCompareValuesCondition(andConditions, "testarone", playlistCounter, allocator);
 
-                        // Condições: Player, Stance, Arma e o `testarone` específico deste moveset
-                        AddIsActorBaseCondition(andConditions, "Skyrim.esm", 0x7, false, allocator);
-                        AddCompareValuesCondition(andConditions, "cycle_instance", i + 1, allocator);
-                        AddFullCategoryConditions(andConditions, category, allocator);
-                        AddCompareValuesCondition(andConditions, "testarone", playlistCounter, allocator);
+                            masterAndBlock.AddMember("Conditions", andConditions, allocator);
+                            conditions.PushBack(masterAndBlock, allocator);
+                            doc.AddMember("conditions", conditions, allocator);
 
-                        masterAndBlock.AddMember("Conditions", andConditions, allocator);
-                        conditions.PushBack(masterAndBlock, allocator);
-                        doc.AddMember("conditions", conditions, allocator);
+                            std::ofstream ofsConfig(fallbackMovesetPath / "config.json");
+                            rapidjson::StringBuffer buffer;
+                            rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                            doc.Accept(writer);
+                            ofsConfig << buffer.GetString();
+                        }
+                        else {
+                            // Remove pasta vazia
+                            std::error_code ec;
+                            std::filesystem::remove(fallbackMovesetPath, ec);
+                        }
 
-                        std::ofstream ofs(fallbackMovesetPath / "config.json");
-                        rapidjson::StringBuffer buffer;
-                        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
-                        doc.Accept(writer);
-                        ofs << buffer.GetString();
-
-                    } else {
-                        std::filesystem::remove(fallbackMovesetPath);
+                        playlistCounter++;
                     }
 
-                    playlistCounter++;  // Incrementa para o próximo moveset na lista
-                }  // Fim do loop de movesets
-            }  // Fim do loop de stances
-        }  // Fim do loop de categorias
+                }
+                catch (const std::exception& e) {
+                    // LOG DE ERRO QUE VAI PEGAR O CRASH
+                    SKSE::log::error("   [CRASH CAUGHT] Erro na Stance {} da Categoria {}: {}", i, category.name, e.what());
+                }
+                catch (...) {
+                    SKSE::log::error("   [CRASH CAUGHT] Erro DESCONHECIDO na Stance {} da Categoria {}", i, category.name);
+                }
+            }
+        }
 
-        SKSE::log::info("Geração de pastas de fallback por moveset concluída.");
+        SKSE::log::info("Geração de pastas de fallback finalizada.");
     }
 
     // --- Lógica da Interface de Usuário ---
@@ -8025,9 +8064,11 @@ void AnimationManager::DrawHitCountNumberPopup() {
     if (ImGui::BeginPopupModal("Enter Hit Count", &_isHitCountNumberPopupOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Enter the number of hits for this rule:");
         ImGui::PushItemWidth(150);
+        static int triggerType = 0;
         // Foca o InputInt na primeira vez que o popup é desenhado
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetKeyboardFocusHere();
+            triggerType = 0;
         }
         if (ImGui::InputInt("##HitCountInput", &_hitCountRuleEditorHitNumber, 1, 5)) {  
             
@@ -8075,10 +8116,17 @@ void AnimationManager::DrawHitCountNumberPopup() {
                 }
             }
         }
-        static int triggerType = 0;
-        ImGui::RadioButton("On Hit", &triggerType, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("On Swing", &triggerType, 1);
+        
+        if (_isCreatingPeriodicHitRule) {
+            // Se for Hit Effect (Periódico), mostra as opções
+            ImGui::RadioButton("On Hit", &triggerType, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("On Swing", &triggerType, 1);
+        }
+        else {
+            // Se for Combo Effect, força "On Hit" e não mostra nada
+            triggerType = 0;
+        }
         ImGui::PopItemWidth();
 
         ImGui::Separator();

@@ -20,6 +20,54 @@ constexpr int kEffectApplyDelayMS = 400;
 static RE::TESObjectWEAP* g_modified2HWeapon = nullptr;
 static RE::BGSEquipSlot* g_original2HSlot = nullptr;
 
+class HitDebouncer {
+public:
+    static HitDebouncer* GetSingleton() {
+        static HitDebouncer singleton;
+        return &singleton;
+    }
+
+    bool CanProcessHit(RE::FormID targetID) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto now = std::chrono::steady_clock::now();
+
+        // Limpeza periódica (a cada 100 verficações) para evitar vazamento de memória em sessões longas
+        if (++_cleanupCounter > 100) {
+            CleanOldEntries(now);
+            _cleanupCounter = 0;
+        }
+
+        auto it = _lastHitTimes.find(targetID);
+        if (it != _lastHitTimes.end()) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+            // 250ms é um bom tempo para evitar o "tremor" do Havok sem impedir combos rápidos
+            if (elapsed < 250) {
+                return false; // Bloqueia o hit (spam)
+            }
+        }
+
+        _lastHitTimes[targetID] = now;
+        return true; // Permite o hit
+    }
+
+private:
+    void CleanOldEntries(std::chrono::steady_clock::time_point now) {
+        for (auto it = _lastHitTimes.begin(); it != _lastHitTimes.end(); ) {
+            // Remove entradas com mais de 10 segundos
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count() > 10) {
+                it = _lastHitTimes.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+    }
+
+    std::map<RE::FormID, std::chrono::steady_clock::time_point> _lastHitTimes;
+    std::mutex _mutex;
+    int _cleanupCounter = 0;
+};
+
 void ScheduleDelayedEffectUpdate(RE::Actor* actor, std::vector<AppliedEffect> newStanceEffects,
                                  std::vector<AppliedEffect> newMovesetEffects, bool updateStance, bool updateMoveset) {
     // Incrementa a geração. Qualquer thread anterior dormindo vai perceber que o ID mudou e abortar.
@@ -1846,8 +1894,13 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
     if (a_event && a_event->holder && a_event->holder->IsPlayerRef()) {
         
         
+
         if(eventName == "weaponSwing" || eventName == "weaponLeftSwing" ||
             eventName == "h2hAttack" || eventName == "PowerAttack_Start_end") {
+
+            g_comboState.isTimerRunning = true;
+            auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::CycleTimer * 1000));
+            g_comboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
 
             if (!g_hitComboState.isTimerRunning && GlobalControl::g_currentHitCount > 0) {
                 SKSE::log::info("New swing starting after combo expired. Resetting hit count from {} to 0.",
@@ -1857,20 +1910,15 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
                 AnimationManager::GetSingleton()->OnHit(player, 0, AttackTrigger::Hit);
             }
 
-            
-            g_comboState.isTimerRunning = true;
-            auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::CycleTimer * 1000));
-            g_comboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
-            
-
         }
-        else if (eventName == "HitFrame") {
+        else if (eventName == "HitFrame" || eventName == "FakeHit") {
             GlobalControl::g_currentSwingCount++;
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentSwingCount, AttackTrigger::Swing);
         }
         else if (eventName == "weaponDraw" || eventName == "weaponSheathe") {
             g_comboState.isTimerRunning = false;  // Cancela qualquer combo pendente
 			GlobalControl::g_currentSwingCount = 0;
+            GlobalControl::g_currentHitCount = 0;
             if (Settings::CycleMoveset) {
                 TriggerSmartRandomNumber(std::string(eventName));
             }
@@ -2594,36 +2642,55 @@ const std::string dawn = "Dawnguard.esm";
 
 RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     const RE::TESHitEvent* a_event, RE::BSTEventSource<RE::TESHitEvent>* a_source) {
+
     auto player = RE::PlayerCharacter::GetSingleton();
+
+    // Verificações básicas de segurança
     if (!a_event || !a_event->cause || !a_event->target || a_event->source == 0) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    // 2. Checar se o causador é o jogador
+    // 1. Checar se o causador é o jogador
     if (!a_event->cause->IsPlayerRef()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    // 3. Checar se o alvo é um NPC válido
-    auto* targetNPC = a_event->target.get()->As<RE::Actor>();
+    // 2. Checar se a fonte é uma ARMA (Ignora magias diretas para evitar loop infinito)
+    auto* weaponForm = RE::TESForm::LookupByID(a_event->source);
+    bool isWeapon = weaponForm && weaponForm->IsWeapon();
 
+    // Se não for arma (ex: é uma fireball), ignoramos o contador de combo físico
+    if (!isWeapon) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // 3. Checar se o alvo é um NPC válido e vivo
+    auto* targetNPC = a_event->target.get()->As<RE::Actor>();
     if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    if (targetNPC->IsHostileToActor(player) && !targetNPC->IsDead()) {
-        // 5. Checar se a fonte do dano é uma arma (e não um feitiço, soco, etc. a menos que queira)
-        auto* weaponForm = RE::TESForm::LookupByID(a_event->source);
-        if (weaponForm && weaponForm->IsWeapon()) {
-            GlobalControl::g_currentHitCount++;
-            player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
-            SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
-            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount,AttackTrigger::Hit);
-            // 2. Esta foi uma rebatida bem-sucedida, reinicie o cronômetro do combo para estender a janela
-            g_hitComboState.isTimerRunning = true;
-            auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
-            g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
-        }
+    // 4. Verificação de Debounce (Anti-Spam)
+    // Isso impede que um único golpe registre múltiplos hits devido à física do jogo
+    if (!HitDebouncer::GetSingleton()->CanProcessHit(targetNPC->GetFormID())) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // --- Se chegou aqui, é um Hit Válido e Único ---
+
+    if (!targetNPC->IsDead()) {
+        GlobalControl::g_currentHitCount++;
+        player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
+
+        SKSE::log::info("Player hit hostile target. New hit count: {}", GlobalControl::g_currentHitCount);
+
+        // Chama o OnHit
+        AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentHitCount, AttackTrigger::Hit);
+
+        // Reinicia o cronômetro do combo
+        g_hitComboState.isTimerRunning = true;
+        auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
+        g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
     }
 
     return RE::BSEventNotifyControl::kContinue;
@@ -2690,7 +2757,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
             }
         }
     }
-found_parent_instances_onhit:;
+    found_parent_instances_onhit:;
 
     if (!parentModInst || !parentSubInst) {
         SKSE::log::error("[OnHit] Não foi possível encontrar Mod/Sub-instâncias pai para o índice {}",
@@ -2766,14 +2833,11 @@ found_parent_instances_onhit:;
     for (const auto& rule : comboRules) {
         if (hitCount >= rule.hitCount) {
             if (NCheckActorHasPerks(actor, rule.perks)) {
-                if (rule.hitCount > highestValidHitCount) {
-                    highestValidHitCount = rule.hitCount;
-                    comboEffectsLayer.clear();
-                    comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
+                if (rule.effects.empty()) {
+                    continue;
                 }
-                else if (rule.hitCount == highestValidHitCount) {
-                    comboEffectsLayer.insert(comboEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
-                }
+                highestValidHitCount = rule.hitCount;
+                comboEffectsLayer = rule.effects;
             }
         }
         else {
@@ -2794,6 +2858,9 @@ found_parent_instances_onhit:;
         for (const auto& rule : periodicRules) {
             if (rule.hitCount > 0 && (hitCount % rule.hitCount == 0)) {
                 if (NCheckActorHasPerks(actor, rule.perks)) {
+                    if (rule.effects.empty()) {
+                        continue;
+                    }
                     if (rule.hitCount > highestPeriodicInterval) {
                         highestPeriodicInterval = rule.hitCount;
                         periodicEffectsLayer.clear(); // Limpa efeitos de regras "menores" (ex: a cada 1)
@@ -2838,12 +2905,15 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
 
     // 1. Seleciona qual lista de histórico usar baseada no gatilho (Hit ou Swing)
     std::vector<AppliedEffect>* pLastAppliedEffects = nullptr;
+    std::vector<AppliedEffect>* pOtherList = nullptr;
 
     if (trigger == AttackTrigger::Hit) {
         pLastAppliedEffects = &_lastAppliedHitEffects;
+        pOtherList = &_lastAppliedSwingEffects;
     }
     else if (trigger == AttackTrigger::Swing) {
-        pLastAppliedEffects = &_lastAppliedSwingEffects; // Requer a declaração no .h
+        pLastAppliedEffects = &_lastAppliedSwingEffects;
+        pOtherList = &_lastAppliedHitEffects;
     }
     else {
         return; // Gatilho desconhecido ou não suportado para diffing
@@ -2864,6 +2934,23 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         std::back_inserter(toRemove));
 
     for (const auto& effect : toRemove) {
+        bool existsInOther = false;
+        if (pOtherList) {
+            for (const auto& otherEff : *pOtherList) {
+                // Compara FormID e Tipo (ignoramos origem e custo na comparação de identidade)
+                if (otherEff.formID == effect.formID && otherEff.type == effect.type) {
+                    existsInOther = true;
+                    break;
+                }
+            }
+        }
+
+        // Se o efeito ainda é necessário pela outra lista, NÃO removemos do jogo.
+        // (Ele sairá apenas da lista 'pLastAppliedEffects' no final da função, o que é correto).
+        if (existsInOther) {
+            // SKSE::log::info("Efeito mantido pois existe na outra lista: {:08X}", effect.formID);
+            continue;
+        }
         RE::TESForm* form = RE::TESForm::LookupByID(effect.formID);
         if (!form) {
             SKSE::log::warn("[ApplyHitEffects] FormID {:08X} não encontrado para remoção.", effect.formID);
@@ -3007,23 +3094,38 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         }
     }
 
-    // 4. Atualiza a lista de rastreamento correta (Hit ou Swing)
-    *pLastAppliedEffects = newEffectsConst;
-}
+    // 4. CORREÇÃO: Atualiza a lista de rastreamento, mas EXCLUI Spells Instantâneos.
+    // Isso garante que no próximo Swing, o Spell Instantâneo seja considerado "Novo" novamente.
+    std::vector<AppliedEffect> effectsToTrack;
+    for (const auto& eff : newEffectsConst) {
+        bool shouldTrack = true; // Por padrão rastreia (Perks, etc)
 
-void GlobalControl::Instakill::thunk(RE::Actor* a_this) { 
-    if (a_this) {
-        logger::info("Hook Instakill: Impedindo {} de morrer via KillImmediate().", a_this->GetName());
-    } else {
-        logger::info("Hook Instakill: Chamado com um ator nulo.");
+        if (eff.type == AppliedEffect::EffectType::Spell) {
+            auto form = RE::TESForm::LookupByID(eff.formID);
+            if (form) {
+                if (auto spell = form->As<RE::SpellItem>()) {
+                    auto st = spell->GetSpellType();
+
+                    // Lógica Simplificada e Robusta:
+                    // Se usamos 'AddSpell' (Estado Persistente), DEVEMOS rastrear para poder remover depois.
+                    if (st == RE::MagicSystem::SpellType::kAbility ||
+                        st == RE::MagicSystem::SpellType::kLesserPower) {
+                        shouldTrack = true;
+                    }
+                    else {
+                        // Se usamos 'CastSpellImmediate' (Evento Instantâneo), NUNCA devemos rastrear.
+                        // Isso força o spell a aparecer como "Novo" na lista 'toAdd' toda vez que o ApplyHitEffects rodar,
+                        // garantindo que ele seja castado novamente a cada hit do combo.
+                        shouldTrack = false;
+                    }
+                }
+            }
+        }
+
+        if (shouldTrack) {
+            effectsToTrack.push_back(eff);
+        }
     }
-    auto message = std::format("Hook Instakill: Impedindo {} de morrer via KillImmediate().", a_this->GetName());
-    RE::DebugMessageBox(message.c_str());
-    // 3. O PONTO-CHAVE
-    // Para impedir a morte, nós simplesmente NÃO chamamos a função original.
-    // Se você quisesse que o ator morresse normalmente, você chamaria:
-    // func(a_this);
 
-    // Como não queremos que ele morra, nós apenas retornamos.
-    return;
+    *pLastAppliedEffects = effectsToTrack;
 }
