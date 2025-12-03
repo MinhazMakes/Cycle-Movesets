@@ -6937,7 +6937,7 @@ void AnimationManager::LoadGameDataForNpcRules() {
     void AnimationManager::FromJson(const rapidjson::Value& json, AnimationModDef& modDef) {
         modDef.name = json["name"].GetString();
         modDef.author = json["author"].GetString();
-        modDef.isFirstPerson = json.HasMember("isFirstPerson") ? json["isFirstPerson"].GetBool() : false;
+        modDef.isFirstPerson = json.HasMember("isFP") ? json["isFP"].GetBool() : false;
         const rapidjson::Value& subAnims = json["subAnimations"];
         for (const auto& subJson : subAnims.GetArray()) {
             SubAnimationDef subDef;
@@ -6953,9 +6953,9 @@ void AnimationManager::LoadGameDataForNpcRules() {
         writer.Key("name");
         writer.String(modDef.name.c_str());
         writer.Key("author");
-        writer.Key("isFirstPerson");
-        writer.Bool(modDef.isFirstPerson);
         writer.String(modDef.author.c_str());
+        writer.Key("isFP");
+        writer.Bool(modDef.isFirstPerson);
         writer.Key("subAnimations");
         writer.StartArray();
         for (const auto& subAnim : modDef.subAnimations) {

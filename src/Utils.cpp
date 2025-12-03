@@ -1576,54 +1576,70 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
                                         spell->GetFormID());
 
                         if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
-                            // Verifica se o ator pode castar (ainda é uma boa prática)
-                            RE::MagicSystem::CannotCastReason reason =
-                                RE::MagicSystem::CannotCastReason::kOK;  // Inicializa com OK
-                            // Nota: CheckCast pode não ser perfeito para CastSpellImmediate,
-                            // mas é uma verificação básica de magicka/silence.
-                            if (Settings::MGKRequeriment) {
-                                if (actor->CheckCast(spell, false, &reason)) {
-                                    auto magicItem = form->As<RE::MagicItem>();
-
-                                    // Verificação de segurança: magicItem não deve ser nulo se spell também não era.
-                                    if (!magicItem) {
-                                        SKSE::log::error(
-                                            "Falha ao converter Form para MagicItem, embora seja um SpellItem!");
-                                        return;
-                                    }
-
-                                    float magickaCost = magicItem->CalculateMagickaCost(actor);
-
-                                    logger::info("[ApplyHitEffects] Custo de Magicka calculado para {}: {}",
-                                                 spell->GetName(), magickaCost);
-
-                                    if (magickaCost > 0.0f) {
-                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka,
-                                                                                     magickaCost);
-                                    }
-
-                                    caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
-                                    SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}",
-                                                    spell->GetName());
-
-                                } else {
-                                    SKSE::log::warn(
-                                        "Não foi possível castar {} via CastSpellImmediate. Razão CheckCast: {}",
-                                        spell->GetName(), static_cast<int>(reason));
-                                }
-                            } else {
-                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                            auto magicItem = form->As<RE::MagicItem>();
+                            if (!magicItem) {
+                                SKSE::log::error("Falha ao converter Form para MagicItem, embora seja um SpellItem!");
+                                continue;
                             }
 
-                        } else {
-                            SKSE::log::error("Não foi possível obter MagicCaster para CastSpellImmediate de {}",
-                                             spell->GetName());
+                            bool canCast = true;
+                            float cost = 0.0f;
+                            RE::ActorValue resourceAV = RE::ActorValue::kMagicka; // Padrão
+
+                            // Só calcula custo se a configuração exigir
+                            if (Settings::MGKRequeriment) {
+                                cost = magicItem->CalculateMagickaCost(actor);
+
+                                // Se houver custo, verifica se o ator pode pagar com o recurso correto
+                                if (cost > 0.0f) {
+                                    // Determina qual atributo usar baseado na configuração do efeito
+                                    switch (effect.costType) {
+                                    case SpellCostType::Stamina:
+                                        resourceAV = RE::ActorValue::kStamina;
+                                        break;
+                                    case SpellCostType::Health:
+                                        resourceAV = RE::ActorValue::kHealth;
+                                        break;
+                                    case SpellCostType::None:
+                                        cost = 0.0f; // Ignora custo
+                                        break;
+                                    default: // Magicka ou None
+                                        resourceAV = RE::ActorValue::kMagicka;
+                                        break;
+                                    }
+
+                                    // Verifica se o ator tem recurso suficiente
+                                    float currentResource = actor->AsActorValueOwner()->GetActorValue(resourceAV);
+                                    if (currentResource < cost) {
+                                        canCast = false;
+                                        SKSE::log::warn("Recurso insuficiente para castar {}. Necessário: {} {}, Atual: {}.",
+                                            spell->GetName(), cost, (int)resourceAV, currentResource);
+                                    }
+                                }
+                            }
+
+                            if (canCast) {
+                                // Se tiver custo e for permitido, consome o recurso
+                                if (Settings::MGKRequeriment && cost > 0.0f) {
+                                    actor->AsActorValueOwner()->DamageActorValue(resourceAV, cost);
+                                    logger::info("[ApplyAndTrackEffects] Custo aplicado para {}: {} (AV: {})",
+                                        spell->GetName(), cost, (int)resourceAV);
+                                }
+
+                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
+                                SKSE::log::info("[ApplyAndTrackEffects] CastSpellImmediate chamado para {}",
+                                    spell->GetName());
+                            }
                         }
-                        
+                        else {
+                            SKSE::log::error("Não foi possível obter MagicCaster para CastSpellImmediate de {}",
+                                spell->GetName());
+                        }
                     }
-                } else {
+                }
+                else {
                     SKSE::log::warn("FormID {:08X} (Plugin: {}) não é um SpellItem válido para adição/cast.",
-                                    effect.formID, effect.pluginName);
+                        effect.formID, effect.pluginName);
                 }
                 break;
         }
@@ -3041,45 +3057,57 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
                         spell->GetFormID());
 
                     if (auto caster = actor->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant)) {
-                        RE::MagicSystem::CannotCastReason reason = RE::MagicSystem::CannotCastReason::kOK;
+                        auto magicItem = form->As<RE::MagicItem>();
+                        if (!magicItem) {
+                            SKSE::log::error("Falha ao converter Form para MagicItem!");
+                            continue;
+                        }
 
                         bool canCast = true;
+                        float cost = 0.0f;
+                        RE::ActorValue resourceAV = RE::ActorValue::kMagicka;
+
+                        // Verifica Custo e Recurso se a configuração estiver ativa
                         if (Settings::MGKRequeriment) {
-                            canCast = actor->CheckCast(spell, false, &reason);
+                            cost = magicItem->CalculateMagickaCost(actor);
+
+                            if (cost > 0.0f) {
+                                // Define o atributo alvo
+                                switch (effect.costType) {
+                                case SpellCostType::Stamina:
+                                    resourceAV = RE::ActorValue::kStamina;
+                                    break;
+                                case SpellCostType::Health:
+                                    resourceAV = RE::ActorValue::kHealth;
+                                    break;
+                                case SpellCostType::None:
+									cost = 0.0f; // Ignora custo
+									break;
+                                case SpellCostType::Magicka:
+                                default:
+                                    resourceAV = RE::ActorValue::kMagicka;
+                                    break;
+                                }
+
+                                // Verifica disponibilidade do recurso
+                                float currentResource = actor->AsActorValueOwner()->GetActorValue(resourceAV);
+                                if (currentResource < cost) {
+                                    canCast = false;
+                                    SKSE::log::warn("[ApplyHitEffects] Falha ao castar {}. Recurso insuficiente (AV: {}). Custo: {}, Atual: {}",
+                                        spell->GetName(), (int)resourceAV, cost, currentResource);
+                                }
+                            }
                         }
 
                         if (canCast) {
-                            auto magicItem = form->As<RE::MagicItem>();
-                            if (!magicItem) {
-                                SKSE::log::error("Falha ao converter Form para MagicItem!");
-                                continue;
+                            // Aplica o custo (Dano ao atributo)
+                            if (Settings::MGKRequeriment && cost > 0.0f) {
+                                actor->AsActorValueOwner()->DamageActorValue(resourceAV, cost);
                             }
 
-                            if (Settings::MGKRequeriment) {
-                                float cost = magicItem->CalculateMagickaCost(actor);
-                                if (cost > 0.0f) {
-                                    switch (effect.costType) {
-                                    case SpellCostType::Magicka:
-                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kMagicka, cost);
-                                        break;
-                                    case SpellCostType::Stamina:
-                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kStamina, cost);
-                                        break;
-                                    case SpellCostType::Health:
-                                        actor->AsActorValueOwner()->DamageActorValue(RE::ActorValue::kHealth, cost);
-                                        break;
-                                    case SpellCostType::None: break;
-                                    };
-                                }
-                            }
-
+                            // Casta a magia
                             caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
                             SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}", spell->GetName());
-
-                        }
-                        else {
-                            SKSE::log::warn("[ApplyHitEffects] Não foi possível castar {}. Razão: {}",
-                                spell->GetName(), static_cast<int>(reason));
                         }
                     }
                     else {
