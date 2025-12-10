@@ -1930,6 +1930,8 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
         else if (eventName == "HitFrame" || eventName == "FakeHit") {
             GlobalControl::g_currentSwingCount++;
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentSwingCount, AttackTrigger::Swing);
+            logger::info("Evento de animação recebido: {}. Swing Count atualizado para {}", eventName,
+				GlobalControl::g_currentSwingCount);
         }
         else if (eventName == "weaponDraw" || eventName == "weaponSheathe") {
             g_comboState.isTimerRunning = false;  // Cancela qualquer combo pendente
@@ -2375,7 +2377,43 @@ bool GlobalControl::ShouldShowPrompts() {
     if (!player) {
         return false;
     }
+    bool isIgnoredRace = false;
 
+    if (auto race = player->GetRace()) {
+        const auto* raceFile = race->GetFile(0);
+        // Verifica se a raça vem do plugin LostGrimoire.esp
+        if (raceFile && _stricmp(raceFile->GetFilename().data(), "LostGrimoire.esp") == 0) {
+
+            // Lista de IDs locais das raças de transformação
+            static const std::vector<RE::FormID> ignoredLocalIDs = {
+                0x04312E, 0x04312F, 0x05C686, 0x05C687, 0x05C69E,
+                0x0617C7, 0x07FE42, 0x07FE4F, 0x084F56, 0x084F69,
+                0x099397, 0x09939B, 0x09939C, 0x0EA4A4, 0x0EF5A9,
+                0x27C7DD, 0x2A5003, 0x2AA10E, 0x33D044
+            };
+
+            // Calcula o ID Local (remove o índice da ordem de carregamento)
+            RE::FormID currentLocalID = race->GetFormID();
+            if (raceFile->IsLight()) {
+                currentLocalID &= 0x00000FFF;
+            }
+            else {
+                currentLocalID &= 0x00FFFFFF;
+            }
+
+            // Verifica se o ID bate com a lista
+            for (auto id : ignoredLocalIDs) {
+                if (currentLocalID == id) {
+                    isIgnoredRace = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (isIgnoredRace) {
+        g_isWeaponDrawn = true;
+	}
     // --- Início da Seção de Depuração ---
 
     // 1. Avalia cada condição individualmente e armazena em uma variável
@@ -2435,6 +2473,66 @@ void GlobalControl::UpdatePromptVisibility() {
         SkyPromptAPI::RemovePrompt(StancesChangesSink::GetSingleton(), MenuShowing);
         SkyPromptAPI::RemovePrompt(MovesetChangesSink::GetSingleton(), MenuShowing);
     }
+}
+
+void GlobalControl::ScheduleSinkRegistration(RE::Actor* actor, int attempts)
+{
+    if (attempts > 20) {
+        SKSE::log::critical("[Actor3DLoadEventHandler] Desistindo após {} tentativas para o ator {:08X}.", attempts, actor->GetFormID());
+        return;
+    }
+
+    std::thread([actor, attempts]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        SKSE::GetTaskInterface()->AddTask([actor, attempts]() {
+            if (!actor) return;
+
+            RE::BSTSmartPointer<RE::BSAnimationGraphManager> graphManager;
+            actor->GetAnimationGraphManager(graphManager);
+
+            if (graphManager) {
+                SKSE::log::info("[Actor3DLoadEventHandler] Graph encontrado para {:08X}. Reconectando...", actor->GetFormID());
+
+                if (actor->IsPlayerRef()) {
+                    // --- LÓGICA DO PLAYER ---
+                    // Remove e Adiciona a Sink do Player
+                    actor->RemoveAnimationGraphEventSink(GlobalControl::AnimationEventHandler::GetSingleton());
+                    if (actor->AddAnimationGraphEventSink(GlobalControl::AnimationEventHandler::GetSingleton())) {
+                        SKSE::log::info("[Actor3DLoadEventHandler] Sink do PLAYER reconectada com sucesso.");
+                    }
+                    auto* controlMap = RE::ControlMap::GetSingleton();
+
+                    if (controlMap) {
+                        // Para PERMITIR o sneaking (abSneaking = true no Papyrus):
+                        controlMap->ToggleControls(RE::ControlMap::UEFlag::kSneaking , true);
+                        controlMap->ToggleControls(RE::ControlMap::UEFlag::kSneaking , true);
+
+                        // Se você quisesse DESABILITAR (abSneaking = false no Papyrus), usaria:
+                        // controlMap->ToggleControls(RE::ControlMap::UEFlag::kSneak, false);
+
+                        // DICA: Você pode combinar flags se quiser controlar movimento também:
+                        // controlMap->ToggleControls(RE::ControlMap::UEFlag::kSneak | RE::ControlMap::UEFlag::kMovement, true);
+                    }
+                }
+                else {
+                    // --- LÓGICA DE NPC ---
+                    // Para NPCs, geralmente usamos o NpcCombatTracker ou NpcCycleSink.
+                    // Forçamos um unregister/register para garantir que o novo Graph pegue o evento.
+
+                    // Nota: Certifique-se que UnregisterSink/RegisterSink estão acessíveis em GlobalControl.h
+                    GlobalControl::NpcCombatTracker::UnregisterSink(actor);
+                    GlobalControl::NpcCombatTracker::RegisterSink(actor);
+
+                    SKSE::log::info("[Actor3DLoadEventHandler] Sink de NPC reconectada (via CombatTracker).");
+                }
+            }
+            else {
+                // Graph ainda nulo, tenta de novo
+                ScheduleSinkRegistration(actor, attempts + 1);
+            }
+            });
+        }).detach();
 }
 
 
@@ -2863,10 +2961,16 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
 
     if (highestValidHitCount != -1) {
         SKSE::log::info("[OnHit] Encontrada camada de Combo válida: {} hits.", highestValidHitCount);
+
+        // Se estamos em um "carry-over" (Hit 6 usando regra do Hit 5), filtramos efeitos instantâneos
+        for (auto& eff : comboEffectsLayer) {
+            eff.origin = "COMBO_TRACK";
+        }
+
         finalEffectsToApply.insert(finalEffectsToApply.end(), comboEffectsLayer.begin(), comboEffectsLayer.end());
     }
 
-    std::sort(periodicRules.begin(), periodicRules.end()); // Ordena para garantir consistência (1, 2, 4...)
+    std::sort(periodicRules.begin(), periodicRules.end());
     int highestPeriodicInterval = -1;
     std::vector<AppliedEffect> periodicEffectsLayer;
     // 7. Processar Regras de "Hit Effects" (Periódicas)
@@ -2895,6 +2999,9 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
                 }
             }
         }
+    }
+    for (auto& eff : periodicEffectsLayer) {
+        eff.origin = "PERIODIC_NO_TRACK";
     }
     finalEffectsToApply.insert(finalEffectsToApply.end(), periodicEffectsLayer.begin(), periodicEffectsLayer.end());
     // 8. Aplicar os efeitos
@@ -3122,7 +3229,7 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         }
     }
 
-    // 4. CORREÇÃO: Atualiza a lista de rastreamento, mas EXCLUI Spells Instantâneos.
+    // 4. Atualiza a lista de rastreamento, mas EXCLUI Spells Instantâneos.
     // Isso garante que no próximo Swing, o Spell Instantâneo seja considerado "Novo" novamente.
     std::vector<AppliedEffect> effectsToTrack;
     for (const auto& eff : newEffectsConst) {
@@ -3131,23 +3238,22 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
         if (eff.type == AppliedEffect::EffectType::Spell) {
             auto form = RE::TESForm::LookupByID(eff.formID);
             if (form) {
-                if (auto spell = form->As<RE::SpellItem>()) {
+                if (auto spell = form->As<RE::SpellItem>(); spell) {
                     auto st = spell->GetSpellType();
-
-                    // Lógica Simplificada e Robusta:
-                    // Se usamos 'AddSpell' (Estado Persistente), DEVEMOS rastrear para poder remover depois.
-                    if (st == RE::MagicSystem::SpellType::kAbility ||
-                        st == RE::MagicSystem::SpellType::kLesserPower) {
-                        shouldTrack = true;
-                    }
-                    else {
-                        // Se usamos 'CastSpellImmediate' (Evento Instantâneo), NUNCA devemos rastrear.
-                        // Isso força o spell a aparecer como "Novo" na lista 'toAdd' toda vez que o ApplyHitEffects rodar,
-                        // garantindo que ele seja castado novamente a cada hit do combo.
+                    // Spells Instantâneos não rastreiam por padrão
+                    if (st != RE::MagicSystem::SpellType::kAbility &&
+                        st != RE::MagicSystem::SpellType::kLesserPower) {
                         shouldTrack = false;
                     }
                 }
             }
+        }
+
+        if (eff.origin == "COMBO_TRACK") {
+            shouldTrack = true; // Força rastreamento para efeitos de Combo (persistir até fim do combo)
+        }
+        else if (eff.origin == "PERIODIC_NO_TRACK") {
+            shouldTrack = false; // Força não-rastreamento para Periódicos (disparar sempre)
         }
 
         if (shouldTrack) {

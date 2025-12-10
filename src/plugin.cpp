@@ -139,7 +139,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(GlobalControl::HitEventHandler::GetSingleton());
 
         GlobalControl::NpcCombatTracker::RegisterSinksForExistingCombatants();
-
+		RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink(GlobalControl::PC3DLoadEventHandler::GetSingleton());
     }
 
 }

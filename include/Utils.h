@@ -422,6 +422,77 @@ namespace GlobalControl {
         bool c_right = false;
     };
 
+    void ScheduleSinkRegistration(RE::Actor* actor, int attempts);
+
+    class PC3DLoadEventHandler : public RE::BSTEventSink<RE::TESObjectLoadedEvent> {
+    public:
+        static PC3DLoadEventHandler* GetSingleton() {
+            static PC3DLoadEventHandler singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override {
+            if (!a_event || !a_event->loaded) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            // Em vez de pegar o Player Singleton, buscamos o formulário pelo ID do evento
+            auto* form = RE::TESForm::LookupByID(a_event->formID);
+            if (!form) return RE::BSEventNotifyControl::kContinue;
+
+            // Tentamos converter para Ator. Se não for ator (ex: uma parede), ignoramos.
+            auto* actor = form->As<RE::Actor>();
+
+            if (actor) {
+
+                // --- VERIFICAÇÃO DE RAÇAS IGNORADAS (LostGrimoire e outras) ---
+                //auto race = actor->GetRace();
+                //if (race) {
+                //    const auto* raceFile = race->GetFile(0);
+
+                //    if (raceFile && _stricmp(raceFile->GetFilename().data(), "LostGrimoire.esp") == 0) {
+
+                //        static const std::vector<RE::FormID> ignoredLocalIDs = {
+                //            0x04312E, 0x04312F, 0x05C686, 0x05C687, 0x05C69E,
+                //            0x0617C7, 0x07FE42, 0x07FE4F, 0x084F56, 0x084F69,
+                //            0x099397, 0x09939B, 0x09939C, 0x0EA4A4, 0x0EF5A9,
+                //            0x27C7DD, 0x2A5003, 0x2AA10E, 0x33D044
+                //        };
+
+                //        RE::FormID currentLocalID = race->GetFormID();
+
+                //        if (raceFile->IsLight()) {
+                //            currentLocalID &= 0x00000FFF;
+                //        }
+                //        else {
+                //            currentLocalID &= 0x00FFFFFF;
+                //        }
+
+                //        bool isIgnored = false;
+                //        for (auto id : ignoredLocalIDs) {
+                //            if (currentLocalID == id) {
+                //                isIgnored = true;
+                //                break;
+                //            }
+                //        }
+
+                //        if (isIgnored) {
+                //            // SKSE::log::debug se quiser menos spam, ou info para monitorar
+                //            // SKSE::log::info("[Actor3DLoadEventHandler] Ignorando ator {:08X} (Raça LostGrimoire).", actor->GetFormID());
+                //            return RE::BSEventNotifyControl::kContinue;
+                //        }
+                //    }
+                //}
+
+                // Se chegou aqui, é um ator válido que recarregou o 3D.
+                // SKSE::log::info("[Actor3DLoadEventHandler] 3D carregado para ator: {:08X}", actor->GetFormID());
+                ScheduleSinkRegistration(actor, 0);
+            }
+
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
 
 }
 

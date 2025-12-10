@@ -2939,15 +2939,15 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
 
                 // NPC Type condition
                 int priorityValue = GetPriorityForType(config.ruleType);
-                
                 AddCompareValuesCondition(andConditions, "CycleMovesetNpcType", priorityValue, allocator);
 
                 // Right-Hand Equipped Type condition
                 AddFullCategoryConditions(andConditions, *config.category, allocator);
                 if (config.category->isDualWield) {
+                    bool isUnarmed = (config.category->equippedTypeValue == 0.0);
                     // Dual Wield e Escudo exigem que AMBOS os slots de 1H estejam ocupados
-                    AddIsEquipSlotOccupiedCondition(andConditions, "RightHand", false, allocator);
-                    AddIsEquipSlotOccupiedCondition(andConditions, "LeftHand", false, allocator);
+                    AddIsEquipSlotOccupiedCondition(andConditions, "RightHand", isUnarmed, allocator);
+                    AddIsEquipSlotOccupiedCondition(andConditions, "LeftHand", isUnarmed, allocator);
                 } else if (config.category->leftHandEquippedTypeValue == -1.0) {
                     // Categoria de Duas Mãos Padrão (ex: Greatsword)
                     AddIsEquipSlotOccupiedCondition(andConditions, "TwoHand", false, allocator);
