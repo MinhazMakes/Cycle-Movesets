@@ -38,6 +38,7 @@ namespace GlobalControl {
     extern int g_directionalState; 
     inline int g_currentHitCount = 0;
     inline int g_currentSwingCount = 0;
+    inline int g_playerHitted = 0;
 
     inline std::vector<AppliedEffect> g_lastAppliedStanceEffects;
     inline std::vector<AppliedEffect> g_lastAppliedMovesetEffects;

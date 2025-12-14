@@ -54,7 +54,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
 
-
+        
         GlobalControl::g_clientID = SkyPromptAPI::RequestClientID();
         if (GlobalControl::g_clientID > 0) {
             SKSE::log::info("ClientID {} recebido da SkyPromptAPI.", GlobalControl::g_clientID);
@@ -105,7 +105,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Hooks::g_weapTypeWarhammer = dataHandler->LookupForm<RE::BGSKeyword>(0x6D930, "Skyrim.esm");
         Hooks::g_canDualWieldTwoHandedKeyword = dataHandler->LookupForm<RE::BGSKeyword>(0x800, "CMF.esp");
         Hooks::g_isActivelyDualWieldingKeyword = dataHandler->LookupForm<RE::BGSKeyword>(0x801, "CMF.esp");
-
+        AnimationManager::GetSingleton()->ScanAnimationMods();
+        UI::RegisterMenu();
     }
     
 
@@ -159,8 +160,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
         eventSource->AddEventSink(GlobalControl::ActionEventHandler::GetSingleton());
         SKSE::log::info("Ouvinte de eventos de acao registrado com sucesso!");
     }
-    AnimationManager::GetSingleton()->ScanAnimationMods();
-    UI::RegisterMenu();
+    
     
     return true;
 }

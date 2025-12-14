@@ -15,6 +15,73 @@
 #include "Hooks.h"
 
 
+std::string GetRelativeIDStr(RE::FormID formID, const std::string& pluginName) {
+    std::string result;
+    auto dataHandler = RE::TESDataHandler::GetSingleton();
+    bool isESL = false;
+
+    if (dataHandler) {
+        const RE::TESFile* plugin = dataHandler->LookupModByName(pluginName);
+        if (plugin && plugin->IsLight()) {
+            isESL = true;
+            result = std::format("0x{:X}", formID & 0xFFF); // ESL: Pega os últimos 12 bits
+        }
+        else {
+            result = std::format("0x{:X}", formID & 0xFFFFFF); // Padrão: Pega os últimos 24 bits
+        }
+    }
+    else {
+        // Fallback seguro
+        result = std::format("0x{:X}", formID & 0xFFFFFF);
+    }
+
+    // LOG PARA DEBUG
+    SKSE::log::info("[GetRelativeIDStr] Original: {:08X} | Plugin: {} (ESL: {}) -> Convertido: {}",
+        formID, pluginName, isESL, result);
+
+    return result;
+}
+
+RE::FormID ResolveFormID(const std::string& pluginName, const std::string& hexIdStr) {
+    auto* dataHandler = RE::TESDataHandler::GetSingleton();
+    if (!dataHandler) {
+        SKSE::log::error("[ResolveFormID] CRITICO: DataHandler nao encontrado.");
+        return 0;
+    }
+
+    const auto* plugin = dataHandler->LookupModByName(pluginName);
+    if (!plugin) {
+        SKSE::log::warn("[ResolveFormID] Plugin '{}' nao esta carregado. ID '{}' sera ignorado.", pluginName, hexIdStr);
+        return 0;
+    }
+
+    uint32_t partialID = 0;
+    try {
+        partialID = std::stoul(hexIdStr, nullptr, 16);
+    }
+    catch (...) {
+        SKSE::log::error("[ResolveFormID] Falha ao converter string hex '{}' para numero.", hexIdStr);
+        return 0;
+    }
+
+    RE::FormID finalID = 0;
+    if (plugin->IsLight()) {
+        // Reconstrói ID de ESL (0xFE + Index Pequeno + ID Parcial)
+        finalID = (plugin->smallFileCompileIndex << 12) | 0xFE000000 | (partialID & 0xFFF);
+    }
+    else {
+        // Reconstrói ID normal (Index Grande + ID Parcial)
+        finalID = (plugin->compileIndex << 24) | (partialID & 0xFFFFFF);
+    }
+
+    // LOG PARA DEBUG
+    SKSE::log::info("[ResolveFormID] Plugin: {} (Index: {:02X}) | Hex: {} -> Final FormID: {:08X}",
+        pluginName, (plugin->IsLight() ? plugin->smallFileCompileIndex : plugin->compileIndex), hexIdStr, finalID);
+
+    return finalID;
+}
+
+
 std::string PathToUTF8(const std::filesystem::path& path) {
     // Força a conversão para u8string (UTF-8 nativo do filesystem)
     const auto u8str = path.u8string();
@@ -931,14 +998,14 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
     }
 
     void CreatePerkListJsonFor2H(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
-                                 const std::vector<PerkDef>& perkList) {
+        const std::vector<PerkDef>& perkList) {
         if (perkList.empty()) return;
         rapidjson::Value perkArray(rapidjson::kArrayType);
         for (const auto& perk : perkList) {
             rapidjson::Value perkData(rapidjson::kArrayType);
             perkData.PushBack(rapidjson::Value(perk.pluginName.c_str(), doc.GetAllocator()), doc.GetAllocator());
-            perkData.PushBack(perk.formID, doc.GetAllocator());
-            // A origem é implícita pelo arquivo, não precisa salvar aqui.
+            std::string relID = GetRelativeIDStr(perk.formID, perk.pluginName);
+            perkData.PushBack(rapidjson::Value(relID.c_str(), doc.GetAllocator()), doc.GetAllocator());
             perkArray.PushBack(perkData, doc.GetAllocator());
         }
         targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
@@ -946,17 +1013,21 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
 
     // Função auxiliar para carregar (similar a ParsePerkListJson)
     void ParsePerkListJsonFor2H(const rapidjson::Value& sourceObject, const std::string& keyName,
-                                std::vector<PerkDef>& targetList) {
+        std::vector<PerkDef>& targetList) {
         targetList.clear();  // Limpa antes de carregar
         if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
             return;
         }
         const auto& perkArray = sourceObject[keyName.c_str()].GetArray();
         for (const auto& perkData : perkArray) {
-            if (perkData.IsArray() && perkData.Size() == 2 && perkData[0].IsString() && perkData[1].IsUint()) {
+            if (perkData.IsArray() && perkData.Size() == 2 && perkData[0].IsString() && perkData[1].IsString()) {
                 std::string plugin = perkData[0].GetString();
-                RE::FormID formID = perkData[1].GetUint();
-                targetList.push_back({plugin, formID, ""});  // Origem vazia, definida pelo contexto do arquivo
+                std::string hexID = perkData[1].GetString();
+                RE::FormID formID = ResolveFormID(plugin, hexID);
+
+                if (formID != 0) { 
+                    targetList.push_back({ plugin, formID, "" });
+                }
             }
         }
     }
@@ -3374,109 +3445,111 @@ void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArr
         }
     }
 
-void CreatePerkListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
-                            const std::vector<PerkDef>& perkList) {
+    void CreatePerkListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
+        const std::vector<PerkDef>& perkList) {
         if (perkList.empty()) return;
 
         rapidjson::Value perkArray(rapidjson::kArrayType);
         for (const auto& perk : perkList) {
             rapidjson::Value perkData(rapidjson::kArrayType);
             perkData.PushBack(rapidjson::Value(perk.pluginName.c_str(), doc.GetAllocator()), doc.GetAllocator());
-            perkData.PushBack(perk.formID, doc.GetAllocator());
+            std::string relID = GetRelativeIDStr(perk.formID, perk.pluginName);
+            perkData.PushBack(rapidjson::Value(relID.c_str(), doc.GetAllocator()), doc.GetAllocator());
             perkData.PushBack(rapidjson::Value(perk.origin.c_str(), doc.GetAllocator()), doc.GetAllocator());
             perkArray.PushBack(perkData, doc.GetAllocator());
         }
         targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
     }
 
-void ParsePerkListJson(const rapidjson::Value& sourceObject, const std::string& keyName, CategoryInstance* stance,
-                           ModInstance* moveset, SubAnimationInstance* subMoveset) {
+    void ParsePerkListJson(const rapidjson::Value& sourceObject, const std::string& keyName, CategoryInstance* stance,
+        ModInstance* moveset, SubAnimationInstance* subMoveset) {
         if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
             return;
         }
 
         const auto& perkArray = sourceObject[keyName.c_str()].GetArray();
         for (const auto& perkData : perkArray) {
-            if (perkData.IsArray() && perkData.Size() == 3 && perkData[0].IsString() && perkData[1].IsUint() &&
+            if (perkData.IsArray() && perkData.Size() == 3 && perkData[0].IsString() && perkData[1].IsString() &&
                 perkData[2].IsString()) {
                 std::string plugin = perkData[0].GetString();
-                RE::FormID formID = perkData[1].GetUint();
+                std::string hexID = perkData[1].GetString();
+                RE::FormID formID = ResolveFormID(plugin, hexID);
                 std::string origin = perkData[2].GetString();
 
-                PerkDef newPerk = {plugin, formID, origin};  // Cria a struct
+                if (formID != 0) {
+                    PerkDef newPerk = { plugin, formID, origin };
 
-                if (origin == "Stance" && stance)
-                    stance->perkList.push_back(newPerk);
-                else if (origin == "Moveset" && moveset)
-                    moveset->perkList.push_back(newPerk);
-                else if (origin == "SubMoveset" && subMoveset)
-                    subMoveset->perkList.push_back(newPerk);
+                    if (origin == "Stance" && stance)
+                        stance->perkList.push_back(newPerk);
+                    else if (origin == "Moveset" && moveset)
+                        moveset->perkList.push_back(newPerk);
+                    else if (origin == "SubMoveset" && subMoveset)
+                        subMoveset->perkList.push_back(newPerk);
+                }
             }
         }
     }
-void CreateEffectListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
-                          const std::vector<AppliedEffect>& effectList) {
-    if (effectList.empty()) return;
 
-    rapidjson::Value effectArray(rapidjson::kArrayType);
-    auto& allocator = doc.GetAllocator();
+    void CreateEffectListJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
+        const std::vector<AppliedEffect>& effectList) {
+        if (effectList.empty()) return;
 
-    for (const auto& effect : effectList) {
-        rapidjson::Value effectData(rapidjson::kArrayType);
-        // Armazena o tipo como string para legibilidade
-        const char* typeStr = "Unknown";
-        switch (effect.type) {
-            case AppliedEffect::EffectType::Perk:
-                typeStr = "Perk";
-                break;
-            case AppliedEffect::EffectType::MagicEffect:
-                typeStr = "MagicEffect";
-                break;
-            case AppliedEffect::EffectType::Spell:
-                typeStr = "Spell";
-                break;
-        }
-        effectData.PushBack(rapidjson::Value(typeStr, allocator), allocator);  // Índice 0: Tipo (string)
-        effectData.PushBack(rapidjson::Value(effect.pluginName.c_str(), allocator), allocator);  // Índice 1: Plugin
-        effectData.PushBack(effect.formID, allocator);                                           // Índice 2: FormID
-        effectData.PushBack(rapidjson::Value(effect.origin.c_str(), allocator),
-                            allocator);  // Índice 3: Origem (para UI)
-        effectData.PushBack(static_cast<int>(effect.costType), allocator);
-        effectArray.PushBack(effectData, allocator);
-    }
-    targetObject.AddMember(rapidjson::Value(keyName.c_str(), allocator), effectArray, allocator);
-}
+        rapidjson::Value effectArray(rapidjson::kArrayType);
+        auto& allocator = doc.GetAllocator();
 
-// --- NOVO HELPER PARA CARREGAR ---
-void ParseEffectListJson(const rapidjson::Value& sourceObject, const std::string& keyName,
-                         std::vector<AppliedEffect>& targetList) {  // Modificado para receber a lista diretamente
-    if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
-        return;
-    }
-
-    const auto& effectArray = sourceObject[keyName.c_str()].GetArray();
-    for (const auto& effectData : effectArray) {
-        // Verifica se tem 4 elementos e os tipos corretos
-        if (effectData.IsArray() && effectData.Size() >= 4 && effectData[0].IsString() && effectData[1].IsString() &&
-            effectData[2].IsUint() && effectData[3].IsString()) {
-            std::string typeStr = effectData[0].GetString();
-            AppliedEffect::EffectType type = AppliedEffect::EffectType::Perk;  // Padrão
-            if (typeStr == "MagicEffect")
-                type = AppliedEffect::EffectType::MagicEffect;
-            else if (typeStr == "Spell")
-                type = AppliedEffect::EffectType::Spell;
-
-            std::string plugin = effectData[1].GetString();
-            RE::FormID formID = effectData[2].GetUint();
-            std::string origin = effectData[3].GetString();
-            SpellCostType cost = SpellCostType::Magicka; // Default
-            if (effectData.Size() >= 5 && effectData[4].IsInt()) {
-                cost = static_cast<SpellCostType>(effectData[4].GetInt());
+        for (const auto& effect : effectList) {
+            rapidjson::Value effectData(rapidjson::kArrayType);
+            const char* typeStr = "Unknown";
+            switch (effect.type) {
+            case AppliedEffect::EffectType::Perk: typeStr = "Perk"; break;
+            case AppliedEffect::EffectType::MagicEffect: typeStr = "MagicEffect"; break;
+            case AppliedEffect::EffectType::Spell: typeStr = "Spell"; break;
             }
-            targetList.push_back({type, plugin, formID, origin, cost });  // Adiciona à lista fornecida
+            effectData.PushBack(rapidjson::Value(typeStr, allocator), allocator);  // Índice 0
+            effectData.PushBack(rapidjson::Value(effect.pluginName.c_str(), allocator), allocator);  // Índice 1
+            std::string relID = GetRelativeIDStr(effect.formID, effect.pluginName);
+            effectData.PushBack(rapidjson::Value(relID.c_str(), allocator), allocator); // Índice 2
+
+            effectData.PushBack(rapidjson::Value(effect.origin.c_str(), allocator), allocator);  // Índice 3
+            effectData.PushBack(static_cast<int>(effect.costType), allocator); // Índice 4
+            effectArray.PushBack(effectData, allocator);
+        }
+        targetObject.AddMember(rapidjson::Value(keyName.c_str(), allocator), effectArray, allocator);
+    }
+
+    // --- NOVO HELPER PARA CARREGAR ---
+    void ParseEffectListJson(const rapidjson::Value& sourceObject, const std::string& keyName,
+        std::vector<AppliedEffect>& targetList) {
+        if (!sourceObject.HasMember(keyName.c_str()) || !sourceObject[keyName.c_str()].IsArray()) {
+            return;
+        }
+
+        const auto& effectArray = sourceObject[keyName.c_str()].GetArray();
+        for (const auto& effectData : effectArray) {
+            if (effectData.IsArray() && effectData.Size() >= 4 && effectData[0].IsString() && effectData[1].IsString() &&
+                effectData[2].IsString() && effectData[3].IsString()) { // Note effectData[2].IsString()
+
+                std::string typeStr = effectData[0].GetString();
+                AppliedEffect::EffectType type = AppliedEffect::EffectType::Perk;
+                if (typeStr == "MagicEffect") type = AppliedEffect::EffectType::MagicEffect;
+                else if (typeStr == "Spell") type = AppliedEffect::EffectType::Spell;
+
+                std::string plugin = effectData[1].GetString();
+                std::string hexID = effectData[2].GetString(); // Ler como String
+                RE::FormID formID = ResolveFormID(plugin, hexID); // Resolver ID
+
+                std::string origin = effectData[3].GetString();
+                SpellCostType cost = SpellCostType::Magicka;
+                if (effectData.Size() >= 5 && effectData[4].IsInt()) {
+                    cost = static_cast<SpellCostType>(effectData[4].GetInt());
+                }
+
+                if (formID != 0) {
+                    targetList.push_back({ type, plugin, formID, origin, cost });
+                }
+            }
         }
     }
-}
 
 void CreateHitRulesJson(rapidjson::Document& doc, rapidjson::Value& targetObject, const std::string& keyName,
                         const std::vector<HitCountRule>& hitRulesList) {
@@ -3539,9 +3612,16 @@ void ParseHitRulesJson(const rapidjson::Value& sourceObject, const std::string& 
                                           const MovesetRule* rule = nullptr) {
             std::string actorTypeStr, actorName, actorFormIDStr, actorPlugin, actorIdentifier;
             if (rule) {
+                auto* form = RE::TESForm::LookupByID(rule->formID);
+                if (form) {
+                    auto* sourceFile = form->GetFile(0); // Pega o arquivo de origem
+                    if (sourceFile) {
+                        const_cast<MovesetRule*>(rule)->pluginName = sourceFile->GetFilename();
+                    }
+                }
                 actorTypeStr = RuleTypeToString(rule->type);
                 actorName = rule->displayName;
-                actorFormIDStr = std::format("{:08X}", rule->formID);
+                actorFormIDStr = GetRelativeIDStr(rule->formID, rule->pluginName);
                 actorPlugin = rule->pluginName;
                 actorIdentifier = rule->identifier;
             } else {  // Player
@@ -3853,11 +3933,21 @@ void AnimationManager::LoadCycleMovesets() {
                         newRule.displayName = profile["Name"].GetString();
                         newRule.identifier = profile["Identifier"].GetString();
                         newRule.pluginName = profile["Plugin"].GetString();
-                        try {
-                            newRule.formID = std::stoul(formIdStr, nullptr, 16);
-                        } catch (const std::exception&) {
-                            continue;
+                        newRule.formID = ResolveFormID(newRule.pluginName, formIdStr);
+
+                        if (newRule.formID == 0 && newRule.type != RuleType::GeneralNPC) {
+                            SKSE::log::warn("Falha ao resolver FormID para regra NPC: {} (Plugin: {})", newRule.displayName, newRule.pluginName);
+                            continue; 
                         }
+                        bool exists = false;
+                        for (auto& existingRule : _npcRules) {
+                            if (existingRule.formID == newRule.formID) {
+                                SKSE::log::info("Regra duplicada detectada e ignorada para FormID: {:08X}", newRule.formID);
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (exists) continue;
                         newRule.categories = _categories;
                         for (auto& pair : newRule.categories) {
                             pair.second.ownerIsPlayer = false;

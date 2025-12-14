@@ -2760,12 +2760,19 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     auto player = RE::PlayerCharacter::GetSingleton();
 
     // Verificações básicas de segurança
-    if (!a_event || !a_event->cause || !a_event->target || a_event->source == 0) {
+    if (!a_event || !a_event->cause || !a_event->target) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
     // 1. Checar se o causador é o jogador
     if (!a_event->cause->IsPlayerRef()) {
+        // Se o player for o alvo (NPC bateu no Player)
+        if (a_event->target->IsPlayerRef()) {
+            player->GetGraphVariableInt("CycleMovesetPlayerHitted", GlobalControl::g_playerHitted);
+            GlobalControl::g_playerHitted++;
+            player->SetGraphVariableInt("CycleMovesetPlayerHitted", GlobalControl::g_playerHitted);
+            logger::info("Player foi atingido. Contador atualizado para: {}", GlobalControl::g_playerHitted);
+        }
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -2774,13 +2781,11 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     bool isWeapon = weaponForm && weaponForm->IsWeapon();
 
     // Se não for arma (ex: é uma fireball), ignoramos o contador de combo físico
-    if (!isWeapon) {
-        return RE::BSEventNotifyControl::kContinue;
-    }
+    
 
     // 3. Checar se o alvo é um NPC válido e vivo
     auto* targetNPC = a_event->target.get()->As<RE::Actor>();
-    if (!targetNPC || targetNPC->IsPlayerRef() || targetNPC->IsDead()) {
+    if (!targetNPC || targetNPC->IsDead()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -2789,10 +2794,13 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     if (!HitDebouncer::GetSingleton()->CanProcessHit(targetNPC->GetFormID())) {
         return RE::BSEventNotifyControl::kContinue;
     }
+    
 
-    // --- Se chegou aqui, é um Hit Válido e Único ---
-
-    if (!targetNPC->IsDead()) {
+    if (!targetNPC->IsDead() && targetNPC->IsHostileToActor(player)) {
+        if (!isWeapon) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        player->GetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
         GlobalControl::g_currentHitCount++;
         player->SetGraphVariableInt("CycleMovesetHitCount", GlobalControl::g_currentHitCount);
 
@@ -2806,7 +2814,7 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
         auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
         g_hitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
     }
-
+   
     return RE::BSEventNotifyControl::kContinue;
 }
 
