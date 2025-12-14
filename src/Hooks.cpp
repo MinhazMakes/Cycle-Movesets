@@ -7452,13 +7452,12 @@ void AnimationManager::DrawConditionsEffectsPopup() {
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The number of hits required (or interval if periodic).");
 
-            if (_hitRuleToEdit->isPeriodic) {
-                // 2. Trigger Type (Hit vs Swing)
+            {
                 int currentTrigger = static_cast<int>(_hitRuleToEdit->trigger);
                 ImGui::SameLine(350);
                 ImGui::PushItemWidth(150);
-                const char* triggers[] = { "On Hit", "On Swing" };
-                if (ImGui::Combo("Trigger", &currentTrigger, triggers, 2)) {
+                const char* triggers[] = { "On Hit", "On Swing", "On Got Hit" };
+                if (ImGui::Combo("Trigger", &currentTrigger, triggers, 3)) {
                     _hitRuleToEdit->trigger = static_cast<AttackTrigger>(currentTrigger);
                 }
                 ImGui::PopItemWidth();
@@ -7845,8 +7844,9 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                     ImGui::Separator();
 
                     if (ImGui::BeginTable(
-                            "HitRulesTable", 3,
-                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                        "HitRulesTable", 4,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                        ImGui::TableSetupColumn("Trigger", ImGuiTableColumnFlags_WidthFixed, 80.0f); // <--- NOVA COLUNA
                         ImGui::TableSetupColumn("Hit Count", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                         ImGui::TableSetupColumn("Conditions / Effects", ImGuiTableColumnFlags_WidthStretch);
                         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 180.0f);
@@ -7866,7 +7866,11 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                             ImGui::PushID(&rule);  // ID único para a regra herdada
                             ImGui::TableNextRow();
                             ImGui::BeginDisabled();  // Desabilita a linha inteira
-
+                            ImGui::TableNextColumn();
+                            const char* triggerStr = "Hit";
+                            if (rule.trigger == AttackTrigger::Swing) triggerStr = "Swing";
+                            if (rule.trigger == AttackTrigger::GotHit) triggerStr = "Got Hit";
+                            ImGui::Text(triggerStr);
                             ImGui::TableNextColumn();
                             ImGui::Text("%d", rule.hitCount);
 
@@ -7903,7 +7907,11 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                                 ImGui::PushID(&rule);
                                 ImGui::TableNextRow();
-
+                                ImGui::TableNextColumn();
+                                const char* triggerStr = "Hit";
+                                if (rule.trigger == AttackTrigger::Swing) triggerStr = "Swing";
+                                if (rule.trigger == AttackTrigger::GotHit) triggerStr = "Got Hit";
+                                ImGui::Text(triggerStr);
                                 ImGui::TableNextColumn();
                                 ImGui::Text("%d", rule.hitCount);
                                 //if (isOverridden) {
@@ -7983,7 +7991,13 @@ void AnimationManager::DrawConditionsEffectsPopup() {
 
                             
                             ImGui::TableNextColumn();
-                            ImGui::Text(rule.trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+                            const char* triggerText = "Unknown";
+                            switch (rule.trigger) {
+                            case AttackTrigger::Hit: triggerText = "Hit"; break;
+                            case AttackTrigger::Swing: triggerText = "Swing"; break;
+                            case AttackTrigger::GotHit: triggerText = "Got Hit"; break;
+                            }
+                            ImGui::Text(triggerText);
                             ImGui::TableNextColumn();
                             ImGui::Text("Every %d", rule.hitCount);
 
@@ -8015,7 +8029,13 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                 ImGui::PushID(&rule);
                                 ImGui::TableNextRow();
                                 ImGui::TableNextColumn();
-                                ImGui::Text(rule.trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+                                const char* triggerText = "Unknown";
+                                switch (rule.trigger) {
+                                case AttackTrigger::Hit: triggerText = "Hit"; break;
+                                case AttackTrigger::Swing: triggerText = "Swing"; break;
+                                case AttackTrigger::GotHit: triggerText = "Got Hit"; break;
+                                }
+                                ImGui::Text(triggerText);
                                 ImGui::TableNextColumn();
                                 ImGui::Text("Every %d", rule.hitCount);
 
@@ -8212,10 +8232,16 @@ void AnimationManager::DrawHitCountNumberPopup() {
             ImGui::RadioButton("On Hit", &triggerType, 0);
             ImGui::SameLine();
             ImGui::RadioButton("On Swing", &triggerType, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("On Got Hit", &triggerType, 2);
         }
         else {
-            // Se for Combo Effect, força "On Hit" e não mostra nada
-            triggerType = 0;
+            ImGui::Text("Trigger:");
+            ImGui::RadioButton("On Hit", &triggerType, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("On Swing", &triggerType, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("On Got Hit", &triggerType, 2);
         }
         ImGui::PopItemWidth();
 

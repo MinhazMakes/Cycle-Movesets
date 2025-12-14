@@ -2768,10 +2768,36 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
     if (!a_event->cause->IsPlayerRef()) {
         // Se o player for o alvo (NPC bateu no Player)
         if (a_event->target->IsPlayerRef()) {
+
+            // --- LÓGICA DE COMBO TIMER PARA GOT HIT ---
+            // Verifica se o timer expirou. Se sim, reseta o contador antes de incrementar.
+            if (GlobalControl::g_gotHitComboState.isTimerRunning) {
+                auto now = std::chrono::steady_clock::now();
+                if (now >= GlobalControl::g_gotHitComboState.comboTimeoutTimestamp) {
+                    SKSE::log::info("GotHit combo timer expired. Resetting count to 0.");
+                    GlobalControl::g_playerHitted = 0;
+                    GlobalControl::g_gotHitComboState.isTimerRunning = false;
+                }
+            }
+            else if (GlobalControl::g_playerHitted > 0) {
+                // Se o timer não estava rodando mas temos hits (ex: carga inicial ou bug), reseta por segurança
+                GlobalControl::g_playerHitted = 0;
+            }
+
+            // Incrementa
             player->GetGraphVariableInt("CycleMovesetPlayerHitted", GlobalControl::g_playerHitted);
             GlobalControl::g_playerHitted++;
             player->SetGraphVariableInt("CycleMovesetPlayerHitted", GlobalControl::g_playerHitted);
+
+            // Reinicia o timer (Usando Settings::HitTimer ou crie um Settings::GotHitTimer se preferir)
+            GlobalControl::g_gotHitComboState.isTimerRunning = true;
+            auto timeout_ms = std::chrono::milliseconds(static_cast<int>(Settings::HitTimer * 1000));
+            GlobalControl::g_gotHitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
+            // ------------------------------------------
+
             logger::info("Player foi atingido. Contador atualizado para: {}", GlobalControl::g_playerHitted);
+
+            AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_playerHitted, AttackTrigger::GotHit);
         }
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -3019,8 +3045,12 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
         finalEffectsToApply.erase(std::unique(finalEffectsToApply.begin(), finalEffectsToApply.end()),
             finalEffectsToApply.end());
 
-        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Trigger: {}).", finalEffectsToApply.size(),
-            trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+        const char* triggerName = "Unknown";
+        if (trigger == AttackTrigger::Hit) triggerName = "Hit";
+        else if (trigger == AttackTrigger::Swing) triggerName = "Swing";
+        else if (trigger == AttackTrigger::GotHit) triggerName = "Got Hit";
+
+        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Trigger: {}).", finalEffectsToApply.size(), triggerName);
         ApplyHitEffects(actor, finalEffectsToApply, trigger);
     }
     else {
@@ -3034,20 +3064,29 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
 void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst, AttackTrigger trigger) {
     if (!actor || !actor->IsPlayerRef()) return;
 
-    // 1. Seleciona qual lista de histórico usar baseada no gatilho (Hit ou Swing)
+    // 1. Seleciona qual lista de histórico usar baseada no gatilho
     std::vector<AppliedEffect>* pLastAppliedEffects = nullptr;
-    std::vector<AppliedEffect>* pOtherList = nullptr;
+    // Precisamos saber quais são as "outras" listas para não remover efeitos que elas usam
+    std::vector<AppliedEffect>* pOtherList1 = nullptr;
+    std::vector<AppliedEffect>* pOtherList2 = nullptr;
 
     if (trigger == AttackTrigger::Hit) {
-        pLastAppliedEffects = &_lastAppliedHitEffects;
-        pOtherList = &_lastAppliedSwingEffects;
+        pLastAppliedEffects = &GlobalControl::g_lastAppliedHitEffects;
+        pOtherList1 = &GlobalControl::g_lastAppliedSwingEffects;
+        pOtherList2 = &GlobalControl::g_lastAppliedGotHitEffects;
     }
     else if (trigger == AttackTrigger::Swing) {
-        pLastAppliedEffects = &_lastAppliedSwingEffects;
-        pOtherList = &_lastAppliedHitEffects;
+        pLastAppliedEffects = &GlobalControl::g_lastAppliedSwingEffects;
+        pOtherList1 = &GlobalControl::g_lastAppliedHitEffects;
+        pOtherList2 = &GlobalControl::g_lastAppliedGotHitEffects;
+    }
+    else if (trigger == AttackTrigger::GotHit) {
+        pLastAppliedEffects = &GlobalControl::g_lastAppliedGotHitEffects;
+        pOtherList1 = &GlobalControl::g_lastAppliedHitEffects;
+        pOtherList2 = &GlobalControl::g_lastAppliedSwingEffects;
     }
     else {
-        return; // Gatilho desconhecido ou não suportado para diffing
+        return;
     }
 
     // Usamos cópias para poder ordenar
@@ -3066,14 +3105,28 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
 
     for (const auto& effect : toRemove) {
         bool existsInOther = false;
-        if (pOtherList) {
-            for (const auto& otherEff : *pOtherList) {
-                // Compara FormID e Tipo (ignoramos origem e custo na comparação de identidade)
+
+        // Verifica na primeira lista vizinha
+        if (pOtherList1) {
+            for (const auto& otherEff : *pOtherList1) {
                 if (otherEff.formID == effect.formID && otherEff.type == effect.type) {
                     existsInOther = true;
                     break;
                 }
             }
+        }
+        // Verifica na segunda lista vizinha (se ainda não achou)
+        if (!existsInOther && pOtherList2) {
+            for (const auto& otherEff : *pOtherList2) {
+                if (otherEff.formID == effect.formID && otherEff.type == effect.type) {
+                    existsInOther = true;
+                    break;
+                }
+            }
+        }
+
+        if (existsInOther) {
+            continue; 
         }
 
         // Se o efeito ainda é necessário pela outra lista, NÃO removemos do jogo.

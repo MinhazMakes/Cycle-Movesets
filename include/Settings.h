@@ -44,7 +44,7 @@ struct AvailableItem {
 };
 
 enum class SpellCostType { Magicka, Stamina, Health, None };
-enum class AttackTrigger { Hit, Swing };
+enum class AttackTrigger { Hit, Swing, GotHit };
 
 struct AppliedEffect {
     enum class EffectType { Perk, MagicEffect, Spell };

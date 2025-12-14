@@ -42,6 +42,9 @@ namespace GlobalControl {
 
     inline std::vector<AppliedEffect> g_lastAppliedStanceEffects;
     inline std::vector<AppliedEffect> g_lastAppliedMovesetEffects;
+    inline std::vector<AppliedEffect> g_lastAppliedHitEffects; 
+    inline std::vector<AppliedEffect> g_lastAppliedSwingEffects;
+    inline std::vector<AppliedEffect> g_lastAppliedGotHitEffects;
     void ApplyAndTrackEffects(RE::Actor* actor, const std::vector<AppliedEffect>& newEffectsConst,
                               std::vector<AppliedEffect>& lastAppliedEffects);
     void UpdateEffectsForDirectionalChange(int oldState, int newState);
@@ -274,6 +277,7 @@ namespace GlobalControl {
     };
     inline ComboState g_comboState;  // Instância global única
     inline ComboState g_hitComboState;
+    inline ComboState g_gotHitComboState;
     struct NpcComboState {
         bool isTimerRunning = false;
         std::chrono::steady_clock::time_point comboTimeoutTimestamp;
