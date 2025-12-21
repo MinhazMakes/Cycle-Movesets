@@ -99,7 +99,7 @@ struct PerkDef {
     std::string pluginName;
     RE::FormID formID = 0;
     std::string origin;  // "Stance", "Moveset", ou "SubMoveset"
-
+    bool isDisabled = false;
     // Opcional: Adicionar um comparador para facilitar buscas
     bool operator==(const RE::FormID& otherFormID) const { return formID == otherFormID; }
 };
@@ -212,8 +212,10 @@ inline int WheelerGamepad = 0;
 
 struct TwoHandHandleConfig {
     std::vector<PerkDef> requiredPerks;
+    std::vector<PerkDef> disabledPerks;
     int minimumLevel = 0;
     std::vector<PerkDef> requiredPerksDual2H;
+    std::vector<PerkDef> disabledPerksDual2H;
 };
 namespace handle{
     inline TwoHandHandleConfig player2HConfig;

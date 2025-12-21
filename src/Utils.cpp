@@ -130,7 +130,7 @@ bool isShield(RE::TESForm* a_item) {
     return armor->IsShield();
 }
 
-bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
+bool GlobalControl::CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
     if (!actor) return false;        // Segurança
     if (perks.empty()) return true;  // Se não há perks, está disponível
 
@@ -145,6 +145,14 @@ bool NCheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) {
     return true;
 }
 
+bool GlobalControl::CheckActorHasAnyPerk(RE::Actor* actor, const std::vector<PerkDef>& perks) {
+    if (!actor || perks.empty()) return false;
+    for (const auto& perkDef : perks) {
+        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
+        if (perkForm && actor->HasPerk(perkForm)) return true; // Se tiver UM, já retorna true
+    }
+    return false;
+}
 void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
     if (!actor || !item || !targetSlot) return;
 
@@ -227,8 +235,10 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
     }
     // 3. Verificar Perks
     logger::info("  - Verificando Perks...");
-    bool hasBase2HPerks = NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerks);
-    bool hasDual2HPerks = NCheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H);
+    bool hasBase2HPerks = GlobalControl::CheckActorHasPerks(npc, handle::npc2HConfig.requiredPerks)&&
+        !GlobalControl::CheckActorHasAnyPerk(npc, handle::npc2HConfig.disabledPerks);
+    bool hasDual2HPerks = GlobalControl::CheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H) &&
+        !GlobalControl::CheckActorHasAnyPerk(npc, handle::npc2HConfig.disabledPerksDual2H);
     if (is2H_2H) {
         if (hasBase2HPerks || hasDual2HPerks) {
         } else {
@@ -1619,7 +1629,7 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
                             RE::ActorValue resourceAV = RE::ActorValue::kMagicka; // Padrão
 
                             // Só calcula custo se a configuração exigir
-                            if (Settings::MGKRequeriment) {
+                            if (Settings::MGKRequeriment && effect.costType != SpellCostType::None) {
                                 cost = magicItem->CalculateMagickaCost(actor);
                                 float originalCost = cost;
                                 if (cost > 0.0f) {
@@ -1752,7 +1762,8 @@ found_parent_instances_directional:;
 
             if (isDirectionalMatch) {
                 // Verifica os perks do filho
-                if (NCheckActorHasPerks(player, childSubInst.perkList)) {
+                if (CheckActorHasPerks(player, childSubInst.perkList) &&
+                    !CheckActorHasAnyPerk(player, childSubInst.disabledPerks)) {
                     effectiveSubInst = &childSubInst;  // Encontrou filho válido, ele se torna o efetivo
                     SKSE::log::info("Sub-moveset direcional encontrado e válido: {}", newState);
                     break;  // Para de procurar filhos
@@ -2658,7 +2669,8 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
             // Checa Nível
             bool levelMet = a_actor->GetLevel() >= configToCheck->minimumLevel;
             // Checa Perks (usando a função de Utils.cpp)
-            bool perksMet = NCheckActorHasPerks(a_actor, configToCheck->requiredPerks);
+            bool perksMet = CheckActorHasPerks(a_actor, configToCheck->requiredPerks) &&
+                !CheckActorHasAnyPerk(a_actor, configToCheck->disabledPerks);
 
             SKSE::log::info("  - Nível Mínimo: {} (Ator: {}) -> {}", configToCheck->minimumLevel, a_actor->GetLevel(),
                             levelMet ? "OK" : "FALHOU");
@@ -2959,7 +2971,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
                 (directionalState == 7 && childSubInst.pLeft) || (directionalState == 8 && childSubInst.pFrontLeft);
 
             if (isDirectionalMatch) {
-                if (NCheckActorHasPerks(actor, childSubInst.perkList)) {
+                if (GlobalControl::CheckActorHasPerks(actor, childSubInst.perkList)&& !GlobalControl::CheckActorHasAnyPerk(actor, childSubInst.disabledPerks)) {
                     effectiveSubInst = &childSubInst;  // Encontrou filho válido
                     //SKSE::log::info("[OnHit] Usando regras de Hit Count do filho direcional (Estado {}).",directionalState);
                     break;
@@ -3003,7 +3015,8 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
 
     for (const auto& rule : comboRules) {
         if (hitCount >= rule.hitCount) {
-            if (NCheckActorHasPerks(actor, rule.perks)) {
+            if (GlobalControl::CheckActorHasPerks(actor, rule.perks) &&
+                !GlobalControl::CheckActorHasAnyPerk(actor, rule.disabledPerks)) {
                 if (rule.effects.empty()) {
                     continue;
                 }
@@ -3034,7 +3047,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
     if (hitCount > 0) {
         for (const auto& rule : periodicRules) {
             if (rule.hitCount > 0 && (hitCount % rule.hitCount == 0)) {
-                if (NCheckActorHasPerks(actor, rule.perks)) {
+                if (GlobalControl::CheckActorHasPerks(actor, rule.perks) && !GlobalControl::CheckActorHasAnyPerk(actor, rule.perks)) {
                     if (rule.effects.empty()) {
                         continue;
                     }
@@ -3258,7 +3271,7 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
                         RE::ActorValue resourceAV = RE::ActorValue::kMagicka;
 
                         // Verifica Custo e Recurso se a configuração estiver ativa
-                        if (Settings::MGKRequeriment) {
+                        if (Settings::MGKRequeriment && effect.costType != SpellCostType::None) {
                             cost = magicItem->CalculateMagickaCost(actor);
                             float originalCost = cost;
                             if (cost > 0.0f) {

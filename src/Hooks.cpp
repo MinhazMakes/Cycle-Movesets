@@ -1007,6 +1007,7 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             perkData.PushBack(rapidjson::Value(perk.pluginName.c_str(), doc.GetAllocator()), doc.GetAllocator());
             std::string relID = GetRelativeIDStr(perk.formID, perk.pluginName);
             perkData.PushBack(rapidjson::Value(relID.c_str(), doc.GetAllocator()), doc.GetAllocator());
+            perkData.PushBack(perk.isDisabled, doc.GetAllocator());
             perkArray.PushBack(perkData, doc.GetAllocator());
         }
         targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
@@ -1056,9 +1057,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
 
         doc.AddMember("MinimumLevel", config.minimumLevel, allocator);
         CreatePerkListJsonFor2H(doc, doc, "RequiredPerks", config.requiredPerks);  // Usa a função auxiliar
+        CreatePerkListJsonFor2H(doc, doc, "DisabledPerks", config.disabledPerks);
         if (!isPlayer) {
             CreatePerkListJsonFor2H(doc, doc, "RequiredPerksDual2H",
                                     config.requiredPerksDual2H);  // <-- Salva o novo campo
+            CreatePerkListJsonFor2H(doc, doc, "DisabledPerksDual2H", config.disabledPerksDual2H);
         }
         // Salvar o arquivo
         std::ofstream ofs(filePath);
@@ -1119,9 +1122,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             }
 
             ParsePerkListJsonFor2H(doc, "RequiredPerks", targetConfig->requiredPerks);  // Usa a função auxiliar
+            ParsePerkListJsonFor2H(doc, "DisabledPerks", targetConfig->disabledPerks);
             if (targetConfig == &handle::npc2HConfig) {
                 ParsePerkListJsonFor2H(doc, "RequiredPerksDual2H",
                                        targetConfig->requiredPerksDual2H);  // <-- Carrega o novo campo
+                ParsePerkListJsonFor2H(doc, "DisabledPerksDual2H", targetConfig->disabledPerksDual2H);
                 SKSE::log::info("... Perks Dual 2H: {}", targetConfig->requiredPerksDual2H.size());  // Log adicional
             } else {
                 // Garante que a lista dual do player esteja vazia se carregar de um arquivo antigo
@@ -2551,12 +2556,12 @@ void AnimationManager::SaveAllSettings() {
                             std::vector<PerkDef> consolidatedPerks;
 
                             // Preenche a lista consolidada com perks da hierarquia
-                            consolidatedPerks.insert(consolidatedPerks.end(), subInst.perkList.begin(),
-                                                     subInst.perkList.end());
-                            consolidatedPerks.insert(consolidatedPerks.end(), modInst.perkList.begin(),
-                                                     modInst.perkList.end());
-                            consolidatedPerks.insert(consolidatedPerks.end(), instance.perkList.begin(),
-                                                     instance.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), subInst.perkList.begin(), subInst.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), subInst.disabledPerks.begin(), subInst.disabledPerks.end()); // NOVO
+                            consolidatedPerks.insert(consolidatedPerks.end(), modInst.perkList.begin(), modInst.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), modInst.disabledPerks.begin(), modInst.disabledPerks.end()); // NOVO
+                            consolidatedPerks.insert(consolidatedPerks.end(), instance.perkList.begin(), instance.perkList.end());
+                            consolidatedPerks.insert(consolidatedPerks.end(), instance.disabledPerks.begin(), instance.disabledPerks.end()); // NOVO
 
                             // Remove duplicatas baseadas no FormID
                             std::set<RE::FormID> seenPerks;
@@ -2756,20 +2761,6 @@ void AnimationManager::PopulatePerkList() {
     SKSE::log::info("Carregados {} perks.", _allPerks.size());
 }
 
-bool AnimationManager::CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks) { 
-if (!actor) return false;        // Segurança
-    if (perks.empty()) return true;  // Se não há perks, está disponível
-
-    for (const auto& perkDef : perks) {
-        auto* perkForm = RE::TESForm::LookupByID<RE::BGSPerk>(perkDef.formID);
-        if (!perkForm || !actor->HasPerk(perkForm)) {
-            // O ator não tem um dos perks necessários
-            return false;
-        }
-    }
-    // O ator tem todos os perks
-    return true;
-}
 
 std::vector<AvailableItem> AnimationManager::GetAvailableStances(RE::Actor* actor, const std::string& categoryName) {
     std::vector<AvailableItem> availableStances;
@@ -2783,7 +2774,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableStances(RE::Actor* acto
         const auto& instance = category.instances[i];  // Esta é a stance
 
         // 1. O ator tem os perks para ESTA STANCE?
-        if (!CheckActorHasPerks(actor, instance.perkList)) {
+        if (!GlobalControl::CheckActorHasPerks(actor, instance.perkList)) {
             continue;  // Pula esta stance, o jogador não tem o perk
         }
 
@@ -2791,7 +2782,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableStances(RE::Actor* acto
         // (Verifica se ela tem pelo menos UM moveset que também seja válido)
         bool hasAvailableMoveset = false;
         for (const auto& modInst : instance.modInstances) {
-            if (!modInst.isSelected || !CheckActorHasPerks(actor, modInst.perkList)) continue;
+            if (!modInst.isSelected || !GlobalControl::CheckActorHasPerks(actor, modInst.perkList)) continue;
 
             for (const auto& subInst : modInst.subAnimationInstances) {
                 if (!subInst.isSelected) continue;
@@ -2802,7 +2793,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableStances(RE::Actor* acto
                                   subInst.pBackLeft || subInst.pRandom || subInst.pDodge);
 
                 // O ator tem os perks para este SUB-MOVESET?
-                if (isParent && CheckActorHasPerks(actor, subInst.perkList)) {
+                if (isParent && GlobalControl::CheckActorHasPerks(actor, subInst.perkList)) {
                     hasAvailableMoveset = true;
                     break;
                 }
@@ -2833,7 +2824,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
 
     // 1. (Opcional, mas bom) Verificar os perks da stance pai.
     // (A GetAvailableStances já deve ter feito isso, mas é uma boa segurança)
-    if (!CheckActorHasPerks(actor, instance.perkList)) {
+    if (!GlobalControl::CheckActorHasPerks(actor, instance.perkList)) {
         return availableMovesets;  // A stance inteira está bloqueada
     }
 
@@ -2842,7 +2833,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
         if (!modInst.isSelected) continue;
 
         // 2. O ator tem os perks para este MOVESET (ModInstance)?
-        if (!CheckActorHasPerks(actor, modInst.perkList)) {
+        if (!GlobalControl::CheckActorHasPerks(actor, modInst.perkList)) {
             // Se o moveset (modpack) está bloqueado, pulamos todos os seus filhos
             // Mas ainda precisamos contar os "pais" dentro dele para manter os índices corretos
             for (const auto& subInst : modInst.subAnimationInstances) {
@@ -2866,7 +2857,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
             parentCounter++;  // Achamos um "pai", seu índice é este.
 
             // 4. O ator tem os perks para este SUB-MOVESET?
-            if (CheckActorHasPerks(actor, subInst.perkList)) {
+            if (GlobalControl::CheckActorHasPerks(actor, subInst.perkList)) {
                 // SUCESSO! Este moveset está disponível
                 const auto& sourceSubAnim = _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
                 const char* displayName =
@@ -2976,7 +2967,7 @@ std::vector<AvailableItem> AnimationManager::GetAvailableMovesets(RE::Actor* act
                 if (!config.perkList.empty()) {
                     for (const auto& perk : config.perkList) {
                         // Agora 'perk' é a nossa struct. Acessamos os membros diretamente.
-                        AddHasPerkCondition(andConditions, perk.pluginName, perk.formID, allocator);
+                        AddHasPerkCondition(andConditions, perk.pluginName, perk.formID, allocator, perk.isDisabled);
                     }
                 }
                 // ActorBase condition
@@ -3457,6 +3448,7 @@ void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArr
             std::string relID = GetRelativeIDStr(perk.formID, perk.pluginName);
             perkData.PushBack(rapidjson::Value(relID.c_str(), doc.GetAllocator()), doc.GetAllocator());
             perkData.PushBack(rapidjson::Value(perk.origin.c_str(), doc.GetAllocator()), doc.GetAllocator());
+            perkData.PushBack(perk.isDisabled, doc.GetAllocator());
             perkArray.PushBack(perkData, doc.GetAllocator());
         }
         targetObject.AddMember(rapidjson::Value(keyName.c_str(), doc.GetAllocator()), perkArray, doc.GetAllocator());
@@ -3470,22 +3462,24 @@ void AnimationManager::AddCompetingKeywordExclusions(rapidjson::Value& parentArr
 
         const auto& perkArray = sourceObject[keyName.c_str()].GetArray();
         for (const auto& perkData : perkArray) {
-            if (perkData.IsArray() && perkData.Size() == 3 && perkData[0].IsString() && perkData[1].IsString() &&
-                perkData[2].IsString()) {
+            if (perkData.IsArray() && perkData.Size() >= 4) {
                 std::string plugin = perkData[0].GetString();
                 std::string hexID = perkData[1].GetString();
                 RE::FormID formID = ResolveFormID(plugin, hexID);
                 std::string origin = perkData[2].GetString();
-
+                bool isDisabled = perkData[3].GetBool();
                 if (formID != 0) {
-                    PerkDef newPerk = { plugin, formID, origin };
+                    PerkDef newPerk = { plugin, formID, origin, isDisabled };
 
                     if (origin == "Stance" && stance)
-                        stance->perkList.push_back(newPerk);
+                        if (isDisabled) stance->disabledPerks.push_back(newPerk);
+                        else stance->perkList.push_back(newPerk);
                     else if (origin == "Moveset" && moveset)
-                        moveset->perkList.push_back(newPerk);
+                        if (isDisabled) moveset->disabledPerks.push_back(newPerk);
+                        else moveset->perkList.push_back(newPerk);
                     else if (origin == "SubMoveset" && subMoveset)
-                        subMoveset->perkList.push_back(newPerk);
+                        if (isDisabled) subMoveset->disabledPerks.push_back(newPerk);
+                        else subMoveset->perkList.push_back(newPerk);
                 }
             }
         }
@@ -4587,7 +4581,7 @@ void AnimationManager::LoadCycleMovesets() {
                         (directionalState == 7 && subInst.pLeft) || (directionalState == 8 && subInst.pFrontLeft);
 
                     if (isDirectionalMatch) {
-                        if (CheckActorHasPerks(actor, subInst.perkList)) {
+                        if (GlobalControl::CheckActorHasPerks(actor, subInst.perkList)) {
                             // Se o jogador tem o perk, retorna o nome do filho
                             const auto& sourceSubAnimChild =
                                 _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
@@ -4665,7 +4659,7 @@ void AnimationManager::LoadCycleMovesets() {
 
                 // Salva os perks de requisito (usando a função 2HHandle que salva [plugin, formID])
                 CreatePerkListJsonFor2H(doc, doc, "perksToUse", instance.perkList);
-
+                CreatePerkListJsonFor2H(doc, doc, "disabledPerksToUse", instance.disabledPerks);
                 // Salva os efeitos aplicados (usando a função que salva [type, plugin, formID, origin])
                 // O "origin" será salvo como "" (vazio), o que é bom.
                 CreateEffectListJson(doc, doc, "effectsToApply", instance.appliedEffects);
@@ -4798,8 +4792,7 @@ void AnimationManager::LoadCycleMovesets() {
             // --- 2. LÓGICA DE CARREGAMENTO NORMAL (NOVO FORMATO) ---
             else if (std::filesystem::exists(newFolderPath) && std::filesystem::is_directory(newFolderPath)) {
                 // Usamos um tuple para carregar e depois ordenar pelo índice
-                std::vector<std::tuple<int, std::string, std::vector<PerkDef>, std::vector<AppliedEffect>>>
-                    loadedStances;
+                std::vector<std::tuple<int, std::string, std::vector<PerkDef>, std::vector<PerkDef>, std::vector<AppliedEffect>>> loadedStances;
 
                 try {
                     for (const auto& entry : std::filesystem::directory_iterator(newFolderPath)) {
@@ -4826,14 +4819,16 @@ void AnimationManager::LoadCycleMovesets() {
                             int index = doc["index"].GetInt();
                             std::string name = doc["name"].GetString();
                             std::vector<PerkDef> perks;
+                            std::vector<PerkDef> disabledPerks;
                             std::vector<AppliedEffect> effects;
 
                             // Carrega os perks (usando o helper simples)
                             ParsePerkListJsonFor2H(doc, "perksToUse", perks);
+                            ParsePerkListJsonFor2H(doc, "disabledPerksToUse", disabledPerks);
                             // Carrega os efeitos (o helper existente funciona)
                             ParseEffectListJson(doc, "effectsToApply", effects);
 
-                            loadedStances.emplace_back(index, name, perks, effects);
+                            loadedStances.emplace_back(index, name, perks, disabledPerks, effects);
                         }
                     }
                 } catch (const std::filesystem::filesystem_error& e) {
@@ -4868,7 +4863,8 @@ void AnimationManager::LoadCycleMovesets() {
                     strcpy_s(category.stanceNameBuffers[i].data(), category.stanceNameBuffers[i].size(),
                              category.stanceNames[i].c_str());
                     category.instances[i].perkList = std::get<2>(loadedStances[i]);
-                    category.instances[i].appliedEffects = std::get<3>(loadedStances[i]);
+                    category.instances[i].disabledPerks = std::get<3>(loadedStances[i]);
+                    category.instances[i].appliedEffects = std::get<4>(loadedStances[i]);
                 }
             }
             // Se nem o arquivo antigo nem a pasta nova existirem, a categoria usará os 4 valores padrão
@@ -7273,14 +7269,14 @@ void AnimationManager::LoadGameDataForNpcRules() {
     }
 
     void AnimationManager::AddHasPerkCondition(rapidjson::Value& conditionsArray, const std::string& plugin,
-                                               RE::FormID formID, rapidjson::Document::AllocatorType& allocator) {
+                                               RE::FormID formID, rapidjson::Document::AllocatorType& allocator, bool negated) {
         if (plugin.empty() || formID == 0) {
             return;  // Não adiciona a condição se o perk não for válido
         }
 
         rapidjson::Value condition(rapidjson::kObjectType);
         condition.AddMember("condition", "HasPerk", allocator);
-
+        if (negated) condition.AddMember("negated", true, allocator);
         rapidjson::Value params(rapidjson::kObjectType);
         params.AddMember("pluginName", rapidjson::Value(plugin.c_str(), allocator), allocator);
         params.AddMember("formID", rapidjson::Value(FormatFormIDForOAR(formID, plugin).c_str(), allocator), allocator);
@@ -7547,7 +7543,8 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                     if (!is_inherited) {  // Só permite alterar se não for herdado
                                         if (is_selected) {
                                             std::string origin = "";  // A origem será definida ao salvar
-                                            tempSelectedPerks.push_back({perk.pluginName, perk.formID, origin});
+                                            tempSelectedPerks.push_back({ perk.pluginName, perk.formID, origin, false });
+
                                         } else {
                                             auto to_erase =
                                                 std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
@@ -7558,7 +7555,25 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                                         }
                                     }
                                 }
+                                if (is_selected && !is_inherited) {
+                                    ImGui::SameLine();
+                                    ImGui::PushItemWidth(120);
 
+                                    // Encontra o item na lista temporária para editar o flag isDisabled
+                                    auto currentPerkIt = std::find_if(tempSelectedPerks.begin(), tempSelectedPerks.end(),
+                                        [&](const PerkDef& p) { return p.formID == perk.formID; });
+
+                                    if (currentPerkIt != tempSelectedPerks.end()) {
+                                        int typeIndex = currentPerkIt->isDisabled ? 1 : 0;
+                                        const char* types[] = { "Required", "Disabler" };
+                                        std::string comboID = std::format("##Type_{:X}", perk.formID);
+
+                                        if (ImGui::Combo(comboID.c_str(), &typeIndex, types, 2)) {
+                                            currentPerkIt->isDisabled = (typeIndex == 1);
+                                        }
+                                    }
+                                    ImGui::PopItemWidth();
+                                }
                                 if (is_inherited) ImGui::EndDisabled();
 
                                 ImGui::SameLine(350);
@@ -8103,6 +8118,7 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                 _subMovesetToEditEffect->appliedEffects = effectsToSave;
 
             std::vector<PerkDef> perksToSave;
+            std::vector<PerkDef> disabledPerksToSave;
             for (const auto& perk : tempSelectedPerks) {
                 bool isInherited = _inheritedPerkFormIDs.count(perk.formID);
                 // Salva apenas se NÃO for herdado OU se estiver editando configs 2H
@@ -8125,25 +8141,46 @@ void AnimationManager::DrawConditionsEffectsPopup() {
                         else if (_subMovesetToEditPerk)
                             origin = "SubMoveset";  // Usa ponteiro ...Perk
                     }
-                    perksToSave.push_back({perk.pluginName, perk.formID, origin});
+                    PerkDef finalPerk = { perk.pluginName, perk.formID, origin, perk.isDisabled };
+                    if (perk.isDisabled) disabledPerksToSave.push_back(finalPerk);
+                    else perksToSave.push_back(finalPerk);
                 }
             }
 
             // Salva na struct apropriada usando os ponteiros ...Perk
-            if (_hitRuleToEdit)  
+            if (_hitRuleToEdit){
                 _hitRuleToEdit->perks = perksToSave;
-            else if (_editingPlayer2HPerks)
+                _hitRuleToEdit->disabledPerks = disabledPerksToSave;
+            }
+            else if (_editingPlayer2HPerks){
                 handle::player2HConfig.requiredPerks = perksToSave;
-            else if (_editingNPC2HPerks)
+                handle::player2HConfig.disabledPerks = disabledPerksToSave;
+            }
+                
+            else if (_editingNPC2HPerks){
                 handle::npc2HConfig.requiredPerks = perksToSave;
-            else if (_editingNPCDual2HPerks)
+                handle::npc2HConfig.disabledPerks = disabledPerksToSave;
+            }
+            else if (_editingNPCDual2HPerks){
                 handle::npc2HConfig.requiredPerksDual2H = perksToSave;
-            else if (_stanceToEditPerk)
+                handle::npc2HConfig.disabledPerksDual2H = disabledPerksToSave;
+            }
+                
+            else if (_stanceToEditPerk){
                 _stanceToEditPerk->perkList = perksToSave;
-            else if (_movesetToEditPerk)
+                _stanceToEditPerk->disabledPerks = disabledPerksToSave;
+            }
+                
+            else if (_movesetToEditPerk){
                 _movesetToEditPerk->perkList = perksToSave;
-            else if (_subMovesetToEditPerk)
+                _movesetToEditPerk->disabledPerks = disabledPerksToSave;
+            }
+                
+            else if (_subMovesetToEditPerk){
                 _subMovesetToEditPerk->perkList = perksToSave;
+                _subMovesetToEditPerk->disabledPerks = disabledPerksToSave;
+            }
+               
             //_hitRuleToEdit = nullptr;
             //ImGui::CloseCurrentPopup();  // Fecha o popup inteiro
         }

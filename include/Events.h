@@ -51,7 +51,6 @@ public:
     void DeleteManagedUserJsonFiles();
     void PopulatePerkList();
     
-    bool CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks);
     std::vector<AvailableItem> GetAvailableStances(RE::Actor* actor, const std::string& categoryName);
     std::vector<AvailableItem> GetAvailableMovesets(RE::Actor* actor, const std::string& categoryName,
                                                     int stanceOriginalIndex);
@@ -383,7 +382,7 @@ private:
     void SaveAnimationLibraryCache(const std::map<std::string, int64_t>& manifest);
 
     void AddHasPerkCondition(rapidjson::Value& conditionsArray, const std::string& plugin, RE::FormID formID,
-                             rapidjson::Document::AllocatorType& allocator);
+                             rapidjson::Document::AllocatorType& allocator, bool negated);
     void AddIsEquipSlotOccupiedCondition(rapidjson::Value& conditionsArray, const std::string& slotName, bool negated,
                                          rapidjson::Document::AllocatorType& allocator);
 

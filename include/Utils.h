@@ -14,7 +14,8 @@ namespace GlobalControl {
     // Altere estes valores para corresponder à sua variável global no Creation Kit
     //constexpr std::string_view ESP_NAME = "CycleMoveset.esp";
     //constexpr std::string_view GLOBAL_EDITOR_ID = "NovoJeito";
-
+    bool CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks);
+    bool CheckActorHasAnyPerk(RE::Actor* actor, const std::vector<PerkDef>& perks);
     // Ponteiro para a variável global, será preenchido quando o jogo carregar
     //inline RE::TESGlobal* g_targetGlobal = nullptr;
     struct MovesetCandidate {
