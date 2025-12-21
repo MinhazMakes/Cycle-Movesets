@@ -47,7 +47,7 @@ namespace Settings {
     inline bool bfcoDirectionalAttacks = true;
     inline bool EnableAllNPC = true;
     inline bool MGKRequeriment = true;
-
+    inline bool AllowPartialCast = true;
 
 }
 

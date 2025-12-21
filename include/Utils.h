@@ -31,7 +31,7 @@ namespace GlobalControl {
         }
     };
 
-
+    bool isTwoHanded(RE::TESForm* a_weap);
     inline bool g_isPlayerInCombat = false;
     inline int g_currentStance = 0;
     inline int g_currentMoveset = 0;

@@ -107,7 +107,7 @@ struct MatchResult {
     int score = -1;  // Pontuação de especificidade
 };
 
-bool isTwoHanded(RE::TESForm* a_weap) {
+bool GlobalControl::isTwoHanded(RE::TESForm* a_weap) {
     if (!a_weap || !a_weap->IsWeapon()) return false;
     auto weap = a_weap->As<RE::TESObjectWEAP>();
     if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) return true;
@@ -205,14 +205,14 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
     auto equippedItemR = npc->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
     auto equippedItem2H = npc->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
 
-    bool isR_2H = isTwoHanded(equippedItemR);
-    bool isL_2H = isTwoHanded(equippedItemL);
-    bool is2H_2H = isTwoHanded(equippedItem2H);
+    bool isR_2H = GlobalControl::isTwoHanded(equippedItemR);
+    bool isL_2H = GlobalControl::isTwoHanded(equippedItemL);
+    bool is2H_2H = GlobalControl::isTwoHanded(equippedItem2H);
 
     // 2. Verificações de saída antecipada
     if (isL_2H && isR_2H) {
-        logger::info("  - Status: NPC já está empunhando duas armas de duas mãos (Dual 2H).");
-        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        //logger::info("  - Status: NPC já está empunhando duas armas de duas mãos (Dual 2H).");
+        //logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
         return;  // Já está em dual wielding 2H
     }
 
@@ -221,9 +221,8 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         if (equippedItemL) {
             leftItemName = equippedItemL->GetName();
         }
-        logger::info("  - Status: NPC já está empunhando 2H na direita e '{}' na esquerda. Não interferir.",
-                     leftItemName);
-        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        //logger::info("  - Status: NPC já está empunhando 2H na direita e '{}' na esquerda. Não interferir.",leftItemName);
+        //logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
         return;
     }
     // 3. Verificar Perks
@@ -233,15 +232,15 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
     if (is2H_2H) {
         if (hasBase2HPerks || hasDual2HPerks) {
         } else {
-            logger::info("  - Status: NPC está empunhando uma arma de duas mãos (slot 2H). Não interferir.");
-            logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+            //logger::info("  - Status: NPC está empunhando uma arma de duas mãos (slot 2H). Não interferir.");
+            //logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
             return;  // Equipamento 2H padrão, não interferir
         }
     }
     // Se o NPC não tem nem os perks base, não fazemos nada.
     if (!hasBase2HPerks) {
-        logger::info("  - Falha na Verificação: NPC não possui os perks base '2H Handle'.");
-        logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+        //logger::info("  - Falha na Verificação: NPC não possui os perks base '2H Handle'.");
+        //logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
         return;
     }
 
@@ -263,7 +262,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         int count = data.first;
         if (count <= 0) continue;
 
-        if (isTwoHanded(item)) {
+        if (GlobalControl::isTwoHanded(item)) {
             auto weap = item->As<RE::TESObjectWEAP>();
             if (weap == r_weap) count--;                                       // Um já está equipado R
             if (weap == l_weap) count--;                                       // Um já está equipado L
@@ -281,16 +280,15 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
     }
 
 
-    logger::info("   - Inventário (disponível): {} 2H, {} 1H, {} Escudos, {} Magias.", twoHandedWeapons.size(),
-                 oneHandedWeapons.size(), shields.size(), spells.size());
+   // logger::info("   - Inventário (disponível): {} 2H, {} 1H, {} Escudos, {} Magias.", twoHandedWeapons.size(),oneHandedWeapons.size(), shields.size(), spells.size());
 
     // Função auxiliar para equipar o melhor item de fallback na mão esquerda
     auto equipLeftHandFallback = [&](RE::Actor* actor) {
         if (!oneHandedWeapons.empty()) {
-            logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback 1H).", oneHandedWeapons[0]->GetName());
+           // logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback 1H).", oneHandedWeapons[0]->GetName());
             EquipItemWithGripChange(actor, oneHandedWeapons[0], Hooks::g_leftHandSlot);
         } else if (!shields.empty()) {
-            logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback Escudo).", shields[0]->GetName());
+           // logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback Escudo).", shields[0]->GetName());
             EquipItemWithGripChange(actor, shields[0], Hooks::g_leftHandSlot);
         } else {
             logger::info("  -> Nenhuma opção de fallback para a Mão Esquerda. Deixando vazia.");
@@ -300,11 +298,11 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
     // 5. Árvore de Decisão Principal
     if (isR_2H) {
         // Caso A: NPC já tem uma 2H na mão direita. Só precisamos gerenciar a mão esquerda.
-        logger::info("  - Ação: NPC já tem 2H na mão direita. Gerenciando mão esquerda...");
+        //logger::info("  - Ação: NPC já tem 2H na mão direita. Gerenciando mão esquerda...");
         if (hasDual2HPerks) {
             if (!twoHandedWeapons.empty()) {
                 // Tenta equipar uma segunda arma 2H
-                logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", twoHandedWeapons[0]->GetName());
+             //   logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", twoHandedWeapons[0]->GetName());
                 EquipItemWithGripChange(npc, twoHandedWeapons[0], Hooks::g_leftHandSlot);
             } else {
                 // Fallback para Dual 2H (não há outra 2H)
@@ -313,7 +311,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
             }
         } else {
             // Tem perks base, mas não dual.
-            logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
+          //  logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
             equipLeftHandFallback(npc);
         }
     } else {
@@ -324,15 +322,15 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         RE::TESObjectWEAP* rightWeaponToEquip = nullptr;
         if (!twoHandedWeapons.empty()) {
             rightWeaponToEquip = twoHandedWeapons[0];
-        } else if (isTwoHanded(r_weap)) {
+        } else if (GlobalControl::isTwoHanded(r_weap)) {
             // Caso especial: a arma 2H já estava equipada, mas não no slot 'RightHand'
             // (Isso não deveria acontecer por causa do check 'is2H_2H', mas é uma segurança)
             rightWeaponToEquip = r_weap;
         }
 
         if (!rightWeaponToEquip) {
-            logger::warn("  - Falha na Ação: NPC tem perks '2H Handle' mas não há armas 2H no inventário.");
-            logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+          //  logger::warn("  - Falha na Ação: NPC tem perks '2H Handle' mas não há armas 2H no inventário.");
+           // logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
             return;
         }
 
@@ -358,21 +356,21 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
 
             if (leftWeaponToEquip) {
                 // Encontrou uma segunda arma 2H
-                logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", leftWeaponToEquip->GetName());
+             //   logger::info("  -> Equipando '{}' na Mão Esquerda (Dual 2H).", leftWeaponToEquip->GetName());
                 EquipItemWithGripChange(npc, leftWeaponToEquip, Hooks::g_leftHandSlot);
             } else {
                 // Fallback para Dual 2H
-                logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
+              //  logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
                 equipLeftHandFallback(npc);
             }
         } else {
             // Tem perks base, mas não dual.
-            logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
+           // logger::info("  - Ação: Perks 'Base 2H' presentes. Usando fallback para mão esquerda...");
             equipLeftHandFallback(npc);
         }
     }
 
-    logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
+   // logger::info("--- [CheckAndEquipHandle] Fim da verificação ---");
 }
 
 // Esta função é chamada a cada frame de input
@@ -567,10 +565,12 @@ void GlobalControl::InputListener::UpdateDirectionalState() {
 }
 
 // NOVA FUNÇÃO AUXILIAR PARA QUALQUER ATOR
+// EM Utils.cpp
+
 std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     if (!targetActor) return "Unarmed";
 
-    // 1. Obter os objetos DIRETAMENTE DOS SLOTS (como sugerido)
+    // 1. Obter os objetos DIRETAMENTE DOS SLOTS
     auto itemR = targetActor->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
     auto itemL = targetActor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
     auto item2H = targetActor->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
@@ -579,12 +579,16 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     RE::TESObjectWEAP* leftWeapon = nullptr;
     RE::TESObjectARMO* leftArmor = nullptr;  // Para escudos
 
+    bool isUsingTwoHandedSlot = false;
+
     // 2. Lógica de prioridade para determinar o que está equipado
     if (item2H && item2H->IsWeapon()) {
         // Caso 1: Arma de Duas Mãos Padrão (ocupa o slot 2H)
         rightWeapon = item2H->As<RE::TESObjectWEAP>();
         leftWeapon = nullptr;  // Slot 2H ocupa ambas as mãos
-    } else {
+        isUsingTwoHandedSlot = true; // Marca que está usando o slot nativo de 2 mãos
+    }
+    else {
         // Caso 2: Dual Wield (1H ou 2H), 1H + Escudo, ou 1H + Vazio
         if (itemR && itemR->IsWeapon()) {
             rightWeapon = itemR->As<RE::TESObjectWEAP>();
@@ -592,26 +596,49 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
         if (itemL) {  // Slot da mão esquerda está ocupado
             if (itemL->IsWeapon()) {
                 leftWeapon = itemL->As<RE::TESObjectWEAP>();
-            } else if (itemL->IsArmor()) {
+            }
+            else if (itemL->IsArmor()) {
                 leftArmor = itemL->As<RE::TESObjectARMO>();
             }
         }
     }
 
-    // 3. Lógica de checagem de estado (igual à original)
+    // 3. Lógica de checagem de estado
     if (!rightWeapon && !leftWeapon && (!leftArmor || !leftArmor->IsShield())) {
         return "Unarmed";
     }
 
-    // 4. Determinar os tipos (igual à original)
-    double rightHandType = rightWeapon ? static_cast<double>(rightWeapon->GetWeaponType()) : 0.0;
+    auto getAdjustedWeaponType = [](RE::TESObjectWEAP* weap) -> double {
+        if (!weap) return 0.0;
+        double type = static_cast<double>(weap->GetWeaponType());
+
+        // Se for TwoHandAxe (6) mas tiver a keyword de Warhammer,
+        // retornamos 10.0 para casar com sua configuração.
+        if (type == 6.0 && weap->HasKeywordString("WeapTypeWarhammer")) {
+            return 10.0;
+        }
+        return type;
+        };
+
+    // 4. Determinar os tipos
+    double rightHandType = getAdjustedWeaponType(rightWeapon);
 
     double leftHandType = 0.0;
-    if (leftWeapon) {
-        leftHandType = static_cast<double>(leftWeapon->GetWeaponType());
-    } else if (leftArmor && leftArmor->IsShield()) {
+
+    // --- LÓGICA ALTERADA AQUI ---
+    if (isUsingTwoHandedSlot) {
+        // Se a arma está no slot de duas mãos, forçamos -1.0.
+        // Isso vai casar com suas categorias: "Greatsword", 5.0, -1.0
+        // E NÃO vai casar (ou terá score menor) com: "Greatsword (1H)", 5.0, 0.0
+        leftHandType = -1.0;
+    }
+    else if (leftWeapon) {
+        leftHandType = getAdjustedWeaponType(leftWeapon);
+    }
+    else if (leftArmor && leftArmor->IsShield()) {
         leftHandType = 11.0;  // Tipo para escudo
     }
+    // Se não entrou nos ifs acima, leftHandType continua 0.0 (Mão Esquerda Vazia / Grip 1H)
 
     // ==============================================================================
     // A lógica de correspondência e pontuação agora funciona universalmente
@@ -619,19 +646,25 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
 
     const auto& allCategories = AnimationManager::GetSingleton()->GetCategories();
     std::vector<MatchResult> matches;
-    std::string fallbackCategory = "Sem Categoria";  // Novo padrão para quando não há correspondência
+    std::string fallbackCategory = "Sem Categoria";
 
     for (const auto& pair : allCategories) {
         const WeaponCategory& category = pair.second;
 
-        double adjustedEquippedTypeValue = (category.equippedTypeValue == 10.0) ? 6.0 : category.equippedTypeValue;
+
         // A. Checagem de Tipo
-        bool rightHandTypeMatch = (adjustedEquippedTypeValue == rightHandType);
+        bool rightHandTypeMatch = (category.equippedTypeValue == rightHandType);
+
+
+        // Se leftHandType for -1.0 (True 2H), ele casa com categorias que pedem < 0.0 ou == -1.0
+        // Se leftHandType for 0.0 (1H Grip), ele casa com categorias que pedem == 0.0
         bool leftHandTypeMatch =
             (category.leftHandEquippedTypeValue < 0.0 || category.leftHandEquippedTypeValue == leftHandType);
 
+        // ATENÇÃO: Para evitar falsos positivos do -1 (wildcard), refinamos a lógica no Score abaixo.
+
         if (rightHandTypeMatch && leftHandTypeMatch) {
-            // B. Checagem de Keywords (apenas se a arma correspondente existir)
+            // B. Checagem de Keywords
             bool rightKeywordsMatch = category.keywords.empty();
             if (!rightKeywordsMatch && rightWeapon) {
                 for (const auto& keyword : category.keywords) {
@@ -643,7 +676,7 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
             }
 
             bool leftKeywordsMatch = category.leftHandKeywords.empty();
-            if (!leftKeywordsMatch && leftWeapon) {  // Só checa keywords em armas na mão esquerda
+            if (!leftKeywordsMatch && leftWeapon) {
                 for (const auto& keyword : category.leftHandKeywords) {
                     if (leftWeapon->HasKeywordString(keyword)) {
                         leftKeywordsMatch = true;
@@ -655,30 +688,28 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
             // C. Se tudo corresponde, calcula o score
             if (rightKeywordsMatch && leftKeywordsMatch) {
                 int score = 0;
-                // Keywords são o critério mais importante
                 if (!category.keywords.empty()) score += 4;
                 if (!category.leftHandKeywords.empty()) score += 4;
 
-                // Tipos específicos são o segundo critério mais importante
-                // Damos um score maior se a mão direita (principal) for definida
+                // Tipos específicos
                 if (category.equippedTypeValue > 0.0) score += 2;
+
+                // CRUCIAL: Se a categoria pede um tipo exato de mão esquerda (>= 0), damos mais pontos.
+                // Isso faz com que "Greatsword (1H)" (Left: 0.0) ganhe de "Greatsword" (Left: -1.0)
+                // quando o leftHandType real for 0.0.
                 if (category.leftHandEquippedTypeValue >= 0.0) score += 1;
 
-                matches.push_back({&category, score});
+                matches.push_back({ &category, score });
             }
         }
     }
 
-    // Se não houver correspondências, retorna o fallback
     if (matches.empty()) {
-        // Poderíamos adicionar uma lógica aqui para encontrar a categoria base (e.g., "Sword") se quiséssemos,
-        // mas retornar "Sem Categoria" é mais seguro para evitar falsos positivos.
         return fallbackCategory;
     }
 
-    // Encontra o elemento com o maior score
     auto bestMatch = std::max_element(matches.begin(), matches.end(),
-                                      [](const MatchResult& a, const MatchResult& b) { return a.score < b.score; });
+        [](const MatchResult& a, const MatchResult& b) { return a.score < b.score; });
 
     return bestMatch->category->name;
 }
@@ -1584,51 +1615,51 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
 
                             bool canCast = true;
                             float cost = 0.0f;
+                            float magnitudeMultiplier = 1.0f;
                             RE::ActorValue resourceAV = RE::ActorValue::kMagicka; // Padrão
 
                             // Só calcula custo se a configuração exigir
                             if (Settings::MGKRequeriment) {
                                 cost = magicItem->CalculateMagickaCost(actor);
-
-                                // Se houver custo, verifica se o ator pode pagar com o recurso correto
+                                float originalCost = cost;
                                 if (cost > 0.0f) {
-                                    // Determina qual atributo usar baseado na configuração do efeito
+                                    // Seleciona o recurso (Stamina/Health/Magicka)
                                     switch (effect.costType) {
-                                    case SpellCostType::Stamina:
-                                        resourceAV = RE::ActorValue::kStamina;
-                                        break;
-                                    case SpellCostType::Health:
-                                        resourceAV = RE::ActorValue::kHealth;
-                                        break;
-                                    case SpellCostType::None:
-                                        cost = 0.0f; // Ignora custo
-                                        break;
-                                    default: // Magicka ou None
-                                        resourceAV = RE::ActorValue::kMagicka;
-                                        break;
+                                    case SpellCostType::Stamina: resourceAV = RE::ActorValue::kStamina; break;
+                                    case SpellCostType::Health:  resourceAV = RE::ActorValue::kHealth; break;
+                                    default:                     resourceAV = RE::ActorValue::kMagicka; break;
                                     }
 
-                                    // Verifica se o ator tem recurso suficiente
                                     float currentResource = actor->AsActorValueOwner()->GetActorValue(resourceAV);
-                                    if (currentResource < cost) {
-                                        canCast = false;
-                                        SKSE::log::warn("Recurso insuficiente para castar {}. Necessário: {} {}, Atual: {}.",
-                                            spell->GetName(), cost, (int)resourceAV, currentResource);
+                                    if (resourceAV == RE::ActorValue::kHealth) {
+                                        if (currentResource <= 1.0f) {
+                                            canCast = false; // Bloqueia cast se já estiver no limite
+                                        }
+                                        else if (cost >= currentResource) {
+                                            // Limita o custo para deixar o player com 1 de HP
+                                            cost = currentResource - 1.0f;
+                                            magnitudeMultiplier = cost / originalCost;
+                                            canCast = true;
+                                        }
+                                    }
+                                    else if (currentResource < cost) {
+                                        if (Settings::AllowPartialCast && currentResource > 0) {
+                                            magnitudeMultiplier = currentResource / cost;
+                                            cost = currentResource;
+                                        }
+                                        else {
+                                            canCast = false;
+                                        }
                                     }
                                 }
                             }
 
                             if (canCast) {
-                                // Se tiver custo e for permitido, consome o recurso
                                 if (Settings::MGKRequeriment && cost > 0.0f) {
                                     actor->AsActorValueOwner()->DamageActorValue(resourceAV, cost);
-                                    logger::info("[ApplyAndTrackEffects] Custo aplicado para {}: {} (AV: {})",
-                                        spell->GetName(), cost, (int)resourceAV);
                                 }
-
-                                caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
-                                SKSE::log::info("[ApplyAndTrackEffects] CastSpellImmediate chamado para {}",
-                                    spell->GetName());
+                                // O 4º parâmetro de CastSpellImmediate é o Multiplicador de Magnitude
+                                caster->CastSpellImmediate(spell, false, actor, magnitudeMultiplier, false, -1.0f, actor);
                             }
                         }
                         else {
@@ -1652,7 +1683,7 @@ void GlobalControl::ApplyAndTrackEffects(RE::Actor* actor, const std::vector<App
 
 
 void GlobalControl::UpdateEffectsForDirectionalChange(int oldState, int newState) {
-    SKSE::log::info("Mudança de estado direcional detectada: {} -> {}", oldState, newState);
+    //SKSE::log::info("Mudança de estado direcional detectada: {} -> {}", oldState, newState);
     auto player = RE::PlayerCharacter::GetSingleton();
     if (!player) return;
 
@@ -1748,7 +1779,7 @@ found_parent_instances_directional:;
     combinedEffects.erase(std::unique(combinedEffects.begin(), combinedEffects.end()), combinedEffects.end());
 
     // 6. Aplicar
-    SKSE::log::info("Aplicando {} efeitos combinados para estado direcional {}", combinedEffects.size(), newState);
+    //SKSE::log::info("Aplicando {} efeitos combinados para estado direcional {}", combinedEffects.size(), newState);
     ApplyAndTrackEffects(player, combinedEffects, g_lastAppliedMovesetEffects);
 
     // 7. (Opcional) Atualizar UI? UpdateSkyPromptTexts pode precisar ser chamado
@@ -1930,8 +1961,7 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
         else if (eventName == "HitFrame" || eventName == "FakeHit") {
             GlobalControl::g_currentSwingCount++;
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_currentSwingCount, AttackTrigger::Swing);
-            logger::info("Evento de animação recebido: {}. Swing Count atualizado para {}", eventName,
-				GlobalControl::g_currentSwingCount);
+            //logger::info("Evento de animação recebido: {}. Swing Count atualizado para {}", eventName,GlobalControl::g_currentSwingCount);
         }
         else if (eventName == "weaponDraw" || eventName == "weaponSheathe") {
             g_comboState.isTimerRunning = false;  // Cancela qualquer combo pendente
@@ -1940,12 +1970,12 @@ RE::BSEventNotifyControl GlobalControl::AnimationEventHandler::ProcessEvent(
             if (Settings::CycleMoveset) {
                 TriggerSmartRandomNumber(std::string(eventName));
             }
-        } else if (eventName == "KillMoveEnd" || eventName == "pairEnd") {
+        }/* else if (eventName == "KillMoveEnd" || eventName == "pairEnd") {
             logger::info("Evento de animação recebido: {}", eventName);
             player->NotifyAnimationGraph("EnableBumper");
             player->NotifyAnimationGraph("tailCombatIdle");
             player->DrawWeaponMagicHands(true);
-        }
+        }*/
 
     } 
     return RE::BSEventNotifyControl::kContinue;
@@ -2578,9 +2608,9 @@ void GlobalControl::EquipMenu::Show(RE::TESBoundObject* a_weapon) const {
         Right_Hand.refid = 0;
     }
     weapon = a_weapon->As<RE::TESObjectWEAP>();
-    if (isTwoHanded(weapon)) {
+    if (GlobalControl::isTwoHanded(weapon)) {
         SkyPromptAPI::SendPrompt(this, GlobalControl::Dynamicgrip); 
-    }
+    }else{}
     
 }
 
@@ -2606,9 +2636,10 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                                    char playSounds, char applyNow) {
     RE::TESObjectWEAP* weapon = nullptr;
     RE::BGSEquipSlot* originalSlot = nullptr;
+    RE::TESBoundObject* a_bound = a_form ? a_form->As<RE::TESBoundObject>() : nullptr;
 
     // 1. VERIFICAR E ALTERAR (ANTES de chamar func)
-    if (a_form && a_form->IsWeapon() && isTwoHanded(a_form)) {
+    if (a_form && a_form->IsWeapon() && GlobalControl::isTwoHanded(a_form)) {
         weapon = a_form->As<RE::TESObjectWEAP>();
         originalSlot = weapon->GetEquipSlot();  // Salva o slot original (ex: g_twoHandSlot)
 
@@ -2644,10 +2675,9 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
             SKSE::log::warn("Equip2H: Não foi possível determinar a configuração 2H Handle a ser verificada.");
         }
         // Força o jogo a pensar que é um item de mão direita
-        if (canUse2HHandle) {
+        if (canUse2HHandle && isTwoHanded(weapon)) {
             weapon->SetEquipSlot(Hooks::g_rightHandSlot);
             func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
-
             // 3. RESTAURAR (DEPOIS de chamar func)
             if (weapon && originalSlot) {
                 // Restaura o slot original para o estado normal (2H)
@@ -2680,12 +2710,10 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
 
                 logger::info("-------------------------------------------------");
             }
-            
             return;
         }
     }
 
-    RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
     return func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, forceEquip, playSounds, applyNow);
     
 }
@@ -2694,9 +2722,9 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
                                              std::int64_t* extraData) {
     RE::TESObjectWEAP* weapon = nullptr;
     RE::BGSEquipSlot* originalSlot = nullptr;
-
+    RE::TESBoundObject* a_bound = a_form ? a_form->As<RE::TESBoundObject>() : nullptr;
     // 1. VERIFICAR E ALTERAR (ANTES de chamar func)
-    if (a_form && a_form->IsWeapon() && isTwoHanded(a_form)) {
+    if (a_form && a_form->IsWeapon() && GlobalControl::isTwoHanded(a_form)) {
         weapon = a_form->As<RE::TESObjectWEAP>();
         originalSlot = weapon->GetEquipSlot();
         auto leftItem = a_actor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
@@ -2717,7 +2745,6 @@ std::int64_t GlobalControl::Unequip2H::thunk(std::int64_t* a, RE::Actor* a_actor
         weapon->SetEquipSlot(originalSlot);  // Restaura para 2H
     }
 
-    RE::SendUIMessage::SendInventoryUpdateMessage(a_actor, nullptr);
     return result;
     
 }
@@ -2849,7 +2876,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
         return;
     }
 
-    SKSE::log::info("[OnHit] Verificando contagem de acertos {} para o ator {}", hitCount, actor->GetName());
+    //SKSE::log::info("[OnHit] Verificando contagem de acertos {} para o ator {}", hitCount, actor->GetName());
 
     // 1. Obter Stance, Moveset, e Sub-Moveset atuais
     std::string categoryName = GetCurrentWeaponCategoryName();
@@ -2908,8 +2935,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
     found_parent_instances_onhit:;
 
     if (!parentModInst || !parentSubInst) {
-        SKSE::log::error("[OnHit] Não foi possível encontrar Mod/Sub-instâncias pai para o índice {}",
-                         originalParentMovesetIndex);
+        //SKSE::log::error("[OnHit] Não foi possível encontrar Mod/Sub-instâncias pai para o índice {}",originalParentMovesetIndex);
         ApplyHitEffects(actor, {}, trigger);
         return;
     }
@@ -2935,13 +2961,10 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
             if (isDirectionalMatch) {
                 if (NCheckActorHasPerks(actor, childSubInst.perkList)) {
                     effectiveSubInst = &childSubInst;  // Encontrou filho válido
-                    SKSE::log::info("[OnHit] Usando regras de Hit Count do filho direcional (Estado {}).",
-                                    directionalState);
+                    //SKSE::log::info("[OnHit] Usando regras de Hit Count do filho direcional (Estado {}).",directionalState);
                     break;
                 } else {
-                    SKSE::log::info(
-                        "[OnHit] Filho direcional {} encontrado, mas jogador não tem perks. Usando regras do pai.",
-                        directionalState);
+                    //SKSE::log::info("[OnHit] Filho direcional {} encontrado, mas jogador não tem perks. Usando regras do pai.",directionalState);
                     // effectiveSubInst continua sendo o pai
                     break;  // Para de procurar filhos para esta direção
                 }
@@ -2994,7 +3017,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
     }
 
     if (highestValidHitCount != -1) {
-        SKSE::log::info("[OnHit] Encontrada camada de Combo válida: {} hits.", highestValidHitCount);
+        //SKSE::log::info("[OnHit] Encontrada camada de Combo válida: {} hits.", highestValidHitCount);
 
         // Se estamos em um "carry-over" (Hit 6 usando regra do Hit 5), filtramos efeitos instantâneos
         for (auto& eff : comboEffectsLayer) {
@@ -3019,7 +3042,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
                         highestPeriodicInterval = rule.hitCount;
                         periodicEffectsLayer.clear(); // Limpa efeitos de regras "menores" (ex: a cada 1)
                         periodicEffectsLayer.insert(periodicEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
-                        SKSE::log::info("[OnHit] Regra Periódica Prioritária definida: ({} / {}).", hitCount, rule.hitCount);
+                        //SKSE::log::info("[OnHit] Regra Periódica Prioritária definida: ({} / {}).", hitCount, rule.hitCount);
                     }
                     else if (rule.hitCount == highestPeriodicInterval) {
                         periodicEffectsLayer.insert(periodicEffectsLayer.end(), rule.effects.begin(), rule.effects.end());
@@ -3028,8 +3051,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
                     finalEffectsToApply.insert(finalEffectsToApply.end(), rule.effects.begin(), rule.effects.end());*/
                 }
                 else {
-                    SKSE::log::info("[OnHit] Regra Periódica pulada (falha no perk): ({} / {}).", hitCount,
-                        rule.hitCount);
+                    //SKSE::log::info("[OnHit] Regra Periódica pulada (falha no perk): ({} / {}).", hitCount,rule.hitCount);
                 }
             }
         }
@@ -3050,12 +3072,11 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
         else if (trigger == AttackTrigger::Swing) triggerName = "Swing";
         else if (trigger == AttackTrigger::GotHit) triggerName = "Got Hit";
 
-        SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Trigger: {}).", finalEffectsToApply.size(), triggerName);
+        //SKSE::log::info("[OnHit] Aplicando {} efeitos mesclados (Trigger: {}).", finalEffectsToApply.size(), triggerName);
         ApplyHitEffects(actor, finalEffectsToApply, trigger);
     }
     else {
-        SKSE::log::info("[OnHit] Nenhuma regra válida encontrada. Limpando efeitos (Trigger: {}).",
-            trigger == AttackTrigger::Hit ? "Hit" : "Swing");
+        //SKSE::log::info("[OnHit] Nenhuma regra válida encontrada. Limpando efeitos (Trigger: {}).",trigger == AttackTrigger::Hit ? "Hit" : "Swing");
         ApplyHitEffects(actor, {}, trigger);
     }
 }
@@ -3233,12 +3254,13 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
 
                         bool canCast = true;
                         float cost = 0.0f;
+                        float magnitudeMultiplier = 1.0f;
                         RE::ActorValue resourceAV = RE::ActorValue::kMagicka;
 
                         // Verifica Custo e Recurso se a configuração estiver ativa
                         if (Settings::MGKRequeriment) {
                             cost = magicItem->CalculateMagickaCost(actor);
-
+                            float originalCost = cost;
                             if (cost > 0.0f) {
                                 // Define o atributo alvo
                                 switch (effect.costType) {
@@ -3259,23 +3281,35 @@ void AnimationManager::ApplyHitEffects(RE::Actor* actor, const std::vector<Appli
 
                                 // Verifica disponibilidade do recurso
                                 float currentResource = actor->AsActorValueOwner()->GetActorValue(resourceAV);
-                                if (currentResource < cost) {
-                                    canCast = false;
-                                    SKSE::log::warn("[ApplyHitEffects] Falha ao castar {}. Recurso insuficiente (AV: {}). Custo: {}, Atual: {}",
-                                        spell->GetName(), (int)resourceAV, cost, currentResource);
+                                if (resourceAV == RE::ActorValue::kHealth) {
+                                    if (currentResource <= 1.0f) {
+                                        canCast = false;
+                                    }
+                                    else if (cost >= currentResource) {
+                                        cost = currentResource - 1.0f;
+                                        magnitudeMultiplier = cost / originalCost;
+                                        canCast = true;
+                                    }
+                                }
+                                // --- PARTIAL CAST: MAGICKA / STAMINA ---
+                                else if (currentResource < cost) {
+                                    if (Settings::AllowPartialCast && currentResource > 0) {
+                                        magnitudeMultiplier = currentResource / cost;
+                                        cost = currentResource;
+                                    }
+                                    else {
+                                        canCast = false;
+                                    }
                                 }
                             }
                         }
 
                         if (canCast) {
-                            // Aplica o custo (Dano ao atributo)
                             if (Settings::MGKRequeriment && cost > 0.0f) {
                                 actor->AsActorValueOwner()->DamageActorValue(resourceAV, cost);
                             }
-
-                            // Casta a magia
-                            caster->CastSpellImmediate(spell, false, actor, 1.0f, false, -1.0f, actor);
-                            SKSE::log::info("[ApplyHitEffects] CastSpellImmediate chamado para {}", spell->GetName());
+                            // Aplica o multiplicador calculado
+                            caster->CastSpellImmediate(spell, false, actor, magnitudeMultiplier, false, -1.0f, actor);
                         }
                     }
                     else {

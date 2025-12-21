@@ -36,8 +36,7 @@ std::string GetRelativeIDStr(RE::FormID formID, const std::string& pluginName) {
     }
 
     // LOG PARA DEBUG
-    SKSE::log::info("[GetRelativeIDStr] Original: {:08X} | Plugin: {} (ESL: {}) -> Convertido: {}",
-        formID, pluginName, isESL, result);
+    //SKSE::log::info("[GetRelativeIDStr] Original: {:08X} | Plugin: {} (ESL: {}) -> Convertido: {}",formID, pluginName, isESL, result);
 
     return result;
 }
@@ -75,8 +74,7 @@ RE::FormID ResolveFormID(const std::string& pluginName, const std::string& hexId
     }
 
     // LOG PARA DEBUG
-    SKSE::log::info("[ResolveFormID] Plugin: {} (Index: {:02X}) | Hex: {} -> Final FormID: {:08X}",
-        pluginName, (plugin->IsLight() ? plugin->smallFileCompileIndex : plugin->compileIndex), hexIdStr, finalID);
+    //SKSE::log::info("[ResolveFormID] Plugin: {} (Index: {:02X}) | Hex: {} -> Final FormID: {:08X}",pluginName, (plugin->IsLight() ? plugin->smallFileCompileIndex : plugin->compileIndex), hexIdStr, finalID);
 
     return finalID;
 }
@@ -377,8 +375,11 @@ void ProcessCycleDarFile(const std::filesystem::path& cycleDarJsonPath) {
             {"War Axe", 3.0, 0.0, false, false, {}, {}},
             {"Mace", 4.0, 0.0, false, false, {}, {}},
             {"Greatsword", 5.0, -1.0, false, false, {}, {}},
+            {"Greatsword (1H)", 5.0, 0.0, false, false, {}, {}},
             {"Battleaxe", 6.0, -1.0, false, false, {}, {}},
+            {"Battleaxe (1H)", 6.0, 0, false, false, {}, {}},
             {"Warhammer", 10.0, -1.0, false, false, {}, {}},
+            {"Warhammer (1H)", 10.0, 0.0, false, false, {}, {}},
             {"Bow", 7.0, -1.0, false, false, {}, {}},
             {"Crossbow", 9.0, -1.0, false, false, {}, {}},
             // Shield
@@ -1605,7 +1606,7 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                             ImGui::Checkbox("##modselect", &modInstance.isSelected);
                             ImGui::SameLine();
                             std::string combinedMovesetLabel =
-                                std::format("C({}) / E({})##MovesetCondEff_{}", modInstance.perkList.size(),
+                                std::format("Effects", modInstance.perkList.size(),
                                             modInstance.appliedEffects.size(), mod_i);
                             if (ImGui::Button(combinedMovesetLabel.c_str())) {
                                 _perksToDisplayInPopup.clear();
@@ -1689,7 +1690,7 @@ void AnimationManager::DrawCategoryUI(WeaponCategory& category) {
                                     ImGui::SameLine();
 
                                     std::string combinedSubLabel =
-                                        std::format("C({}) / E({})##SubCondEff_{}_{}",
+                                        std::format("Effects",
                                                     subInstance.perkList.size(), subInstance.appliedEffects.size(),
                                                     mod_i,   
                                                     sub_j);  
@@ -4922,7 +4923,7 @@ void AnimationManager::LoadCycleMovesets() {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the display name of this stance.");
 
             // 2. Botão de Condições & Efeitos
-            std::string condEffLabel = std::format("(C:{} / E:{})", instance.perkList.size(),
+            std::string condEffLabel = std::format("Edit effects", instance.perkList.size(),
                                                    instance.appliedEffects.size());
             if (ImGui::Button(condEffLabel.c_str(), ImVec2(200, 0))) {
                 _isStanceManagementPopupOpen = false;
@@ -7371,7 +7372,7 @@ RE::InventoryEntryData* Hooks::GetSelectedEntryInMenu() {
 
 int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
         const auto ui = RE::UI::GetSingleton();
-
+		auto player = RE::PlayerCharacter::GetSingleton();
         // Verificar se a UI existe E se o "InventoryMenu" está aberto
         if (ui && ui->IsMenuOpen("InventoryMenu")) {
         if (is_open.load()) {
@@ -7379,7 +7380,7 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
     #undef GetObject
     #endif
             if (const auto a_bound = a1->GetObject()) {
-                if (a_bound->IsWeapon()) {
+                if (GlobalControl::isTwoHanded(a_bound)) {
                     //logger::info("Mostrando prompt de arma para {}", a_bound->GetName());
                     GlobalControl::EquipMenu::GetSingleton()->Show(a_bound);
                 } else {
@@ -7394,7 +7395,7 @@ int64_t Hooks::InventoryHoverHook::thunk(RE::InventoryEntryData* a1) {
         } else {
             GlobalControl::EquipMenu::GetSingleton()->Hide();
         }
-
+        
         return originalFunction(a1);
 }
 

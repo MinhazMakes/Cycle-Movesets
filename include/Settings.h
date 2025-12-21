@@ -112,6 +112,7 @@ struct HitCountRule {
     AttackTrigger trigger = AttackTrigger::Hit;
     // Operador para ordenação (útil para a UI)
     bool operator<(const HitCountRule& other) const { return hitCount < other.hitCount; }
+    std::vector<PerkDef> disabledPerks;
 };
 
 // --- Estruturas de Configuração do Usuário ---
@@ -137,6 +138,7 @@ struct SubAnimationInstance {
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
+    std::vector<PerkDef> disabledPerks;
 };
 
 struct ModInstance {
@@ -151,6 +153,7 @@ struct ModInstance {
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
+    std::vector<PerkDef> disabledPerks;
 };
 
 struct CategoryInstance {
@@ -158,6 +161,7 @@ struct CategoryInstance {
     std::vector<PerkDef> perkList;
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
+    std::vector<PerkDef> disabledPerks;
 };
 
 struct WeaponCategory {

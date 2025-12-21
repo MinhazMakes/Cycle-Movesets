@@ -136,6 +136,21 @@ namespace MyMenu {
                 if (ImGui::Checkbox("BFCO directional attacks", &Settings::bfcoDirectionalAttacks)) {
                     settings_changed = true;
                 }
+                ImGui::Separator();
+
+                // --- ADIÇÃO: Checkbox para Partial Cast ---
+                // Isto afeta globalmente como os efeitos de hit (spells) são aplicados
+                if (ImGui::Checkbox("Allow Partial Cast (Low Resources)", &Settings::AllowPartialCast)) {
+                    settings_changed = true;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "If enabled, spells/effects trigger even with insufficient Magicka/Stamina.\n"
+                        "However, the magnitude/duration will be reduced proportionally\n"
+                        "to the missing resource amount.");
+                }
                 
                 if (settings_changed) {
                     MyMenu::SaveSettings();
@@ -285,6 +300,7 @@ namespace MyMenu {
         doc.AddMember("OnlyCombat", Settings::OnlyCombat, allocator);
         doc.AddMember("BfcoDPA", Settings::bfcoDirectionalAttacks, allocator);
         doc.AddMember("EnableAllNPC", Settings::EnableAllNPC, allocator);
+        doc.AddMember("AllowPartialCast", Settings::AllowPartialCast, allocator);
 
         // Cria o array de dispositivos
         rapidjson::Value devicesArray(rapidjson::kArrayType);
@@ -398,7 +414,9 @@ namespace MyMenu {
         if (doc.HasMember("EnableAllNPC") && doc["EnableAllNPC"].IsBool()) {
             Settings::EnableAllNPC = doc["EnableAllNPC"].GetBool();
         }
-
+        if (doc.HasMember("AllowPartialCast") && doc["AllowPartialCast"].IsBool()) {
+            Settings::AllowPartialCast = doc["AllowPartialCast"].GetBool();
+        }
         // Carrega as configurações dos dispositivos
         if (doc.HasMember("Devices") && doc["Devices"].IsArray()) {
             for (auto& device : doc["Devices"].GetArray()) {
