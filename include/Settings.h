@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include "MCP.h"
+
+inline bool gameisloaded = false;
 // Enum para os tipos de regra
 enum class RuleType { UniqueNPC, Faction, Keyword, Race, GeneralNPC, Player };
 
@@ -115,6 +117,13 @@ struct HitCountRule {
     std::vector<PerkDef> disabledPerks;
 };
 
+struct StartupRule {
+    std::string name = "Startup Rule";
+    std::vector<PerkDef> requiredPerks;
+    std::vector<PerkDef> disabledPerks;
+    std::vector<AppliedEffect> effects;
+};
+
 // --- Estruturas de Configuração do Usuário ---
 struct SubAnimationInstance {
     std::string sourceModName;  // Nome do mod de origem (e.g., "BFCO")
@@ -139,6 +148,7 @@ struct SubAnimationInstance {
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
     std::vector<PerkDef> disabledPerks;
+    std::vector<StartupRule> startupRules;
 };
 
 struct ModInstance {
@@ -154,6 +164,7 @@ struct ModInstance {
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
     std::vector<PerkDef> disabledPerks;
+    std::vector<StartupRule> startupRules;
 };
 
 struct CategoryInstance {
@@ -162,6 +173,7 @@ struct CategoryInstance {
     std::vector<AppliedEffect> appliedEffects;
     std::vector<HitCountRule> hitRules;
     std::vector<PerkDef> disabledPerks;
+    std::vector<StartupRule> startupRules;
 };
 
 struct WeaponCategory {
@@ -201,11 +213,13 @@ struct MovesetRule {
     // Reutiliza a mesma estrutura que você já tem para o jogador e NPCs.
     std::map<std::string, WeaponCategory> categories;
 };
+
 struct NpcRuleMatch {
     const MovesetRule* rule = nullptr;  // O ponteiro que precisamos!
     int movesetCount = 0;
     int priority = 0;
 };
+
 void WheelerKeys();
 inline int WheelerKeyboard = 0;
 inline int WheelerGamepad = 0;

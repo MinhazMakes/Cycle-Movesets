@@ -151,7 +151,15 @@ namespace MyMenu {
                         "However, the magnitude/duration will be reduced proportionally\n"
                         "to the missing resource amount.");
                 }
-                
+
+                if (ImGui::Checkbox("Disable Cache", &Settings::DisableCache)) {
+                    settings_changed = true;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Forces the mod to perform a full scan of the animation folders every time it loads, ignoring the CMF_Cache.json file.");
+                }
                 if (settings_changed) {
                     MyMenu::SaveSettings();
                 }
@@ -301,7 +309,7 @@ namespace MyMenu {
         doc.AddMember("BfcoDPA", Settings::bfcoDirectionalAttacks, allocator);
         doc.AddMember("EnableAllNPC", Settings::EnableAllNPC, allocator);
         doc.AddMember("AllowPartialCast", Settings::AllowPartialCast, allocator);
-
+        doc.AddMember("DisableCache", Settings::DisableCache, allocator);
         // Cria o array de dispositivos
         rapidjson::Value devicesArray(rapidjson::kArrayType);
 
@@ -416,6 +424,9 @@ namespace MyMenu {
         }
         if (doc.HasMember("AllowPartialCast") && doc["AllowPartialCast"].IsBool()) {
             Settings::AllowPartialCast = doc["AllowPartialCast"].GetBool();
+        }
+        if (doc.HasMember("DisableCache") && doc["DisableCache"].IsBool()) {
+            Settings::DisableCache = doc["DisableCache"].GetBool();
         }
         // Carrega as configurações dos dispositivos
         if (doc.HasMember("Devices") && doc["Devices"].IsArray()) {

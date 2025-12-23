@@ -153,6 +153,22 @@ bool GlobalControl::CheckActorHasAnyPerk(RE::Actor* actor, const std::vector<Per
     }
     return false;
 }
+void GlobalControl::AddStartupRuleEffects(RE::Actor* actor, const std::vector<StartupRule>& rules, std::vector<AppliedEffect>& targetList, const std::string& origin) {
+    if (!actor) return;
+    for (const auto& rule : rules) {
+        // 1. Verifica se o ator tem os perks necessários
+        if (!CheckActorHasPerks(actor, rule.requiredPerks)) continue;
+
+        // 2. Verifica se o ator tem algum perk que desabilita a regra
+        if (CheckActorHasAnyPerk(actor, rule.disabledPerks)) continue;
+
+        // 3. Adiciona os efeitos da regra à lista final
+        for (auto eff : rule.effects) {
+            eff.origin = origin;
+            targetList.push_back(eff);
+        }
+    }
+}
 void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGSEquipSlot* targetSlot) {
     if (!actor || !item || !targetSlot) return;
 
@@ -836,10 +852,7 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                             if (originalStanceIndexToApply > 0 &&
                                 originalStanceIndexToApply <= category.instances.size()) {
                                 const auto& stanceInstance = category.instances[originalStanceIndexToApply - 1];
-                                firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                                   stanceInstance.appliedEffects.begin(),
-                                                                   stanceInstance.appliedEffects.end());
-                                
+                                AddStartupRuleEffects(player, stanceInstance.startupRules, firstMovesetCombinedEffects, "Stance");
                                 int parentCounter = 0;
                                 auto& mutableStanceInstance = const_cast<CategoryInstance&>(stanceInstance);
                                 for (const auto& modInst : mutableStanceInstance.modInstances) { 
@@ -860,17 +873,10 @@ void GlobalControl::StancesSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                                 }
                             found_first_moveset_decline_stance_sink:;
                                 if (firstModInst)
-                                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                                       firstModInst->appliedEffects.begin(),
-                                                                       firstModInst->appliedEffects.end());
+                                AddStartupRuleEffects(player, firstModInst->startupRules, firstMovesetCombinedEffects, "Moveset");
                                 if (firstSubInst)
-                                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                                       firstSubInst->appliedEffects.begin(),
-                                                                       firstSubInst->appliedEffects.end());
                                 std::sort(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end());
-                                firstMovesetCombinedEffects.erase(
-                                    std::unique(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end()),
-                                    firstMovesetCombinedEffects.end());
+                                AddStartupRuleEffects(player, firstSubInst->startupRules, firstMovesetCombinedEffects, "SubMoveset");
                             }
                         }
                     }  // Fim if (!availableMovesets.empty())
@@ -990,6 +996,7 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
         if (originalStanceIndexToApply > 0) {                    // Se temos uma stance válida
             const auto availableMovesets =
                 animManager->GetAvailableMovesets(player, categoryName, originalStanceIndexToApply);
+
             if (!availableMovesets.empty()) {
                 g_currentMoveset = 1;                                              // Seleciona o primeiro da lista
                 originalMovesetIndexToApply = availableMovesets[0].originalIndex;  // Pega o índice real
@@ -1001,10 +1008,7 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                     if (originalStanceIndexToApply > 0 && originalStanceIndexToApply <= category.instances.size()) {
                         const auto& stanceInstance = category.instances[originalStanceIndexToApply - 1];
                         // Efeitos da Stance (sempre incluídos nos efeitos do moveset)
-                        firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                           stanceInstance.appliedEffects.begin(),
-                                                           stanceInstance.appliedEffects.end());
-
+                        AddStartupRuleEffects(player, stanceInstance.startupRules, firstMovesetCombinedEffects, "Stance");
                         // Encontra o ModInstance e SubAnimationInstance do *primeiro* moveset
                         // (originalMovesetIndexToApply)
                         int parentCounter = 0;
@@ -1027,14 +1031,10 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                         }
                     found_first_moveset:;  // Label para o goto
                         if (firstModInst) {
-                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                               firstModInst->appliedEffects.begin(),
-                                                               firstModInst->appliedEffects.end());
+                            AddStartupRuleEffects(player, firstModInst->startupRules, firstMovesetCombinedEffects, "Moveset");
                         }
                         if (firstSubInst) {
-                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                               firstSubInst->appliedEffects.begin(),
-                                                               firstSubInst->appliedEffects.end());
+                            AddStartupRuleEffects(player, firstSubInst->startupRules, firstMovesetCombinedEffects, "SubMoveset");
                         }
                         // Remove duplicatas
                         std::sort(firstMovesetCombinedEffects.begin(), firstMovesetCombinedEffects.end());
@@ -1055,9 +1055,13 @@ void GlobalControl::StancesChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
             if (cat_it != animManager->GetCategories().end()) {
                 const WeaponCategory& category = cat_it->second;
                 if (originalStanceIndexToApply <= category.instances.size()) {
-                    newStanceEffects = category.instances[originalStanceIndexToApply - 1].appliedEffects;
+                    const auto& stanceInst = category.instances[originalStanceIndexToApply - 1];
+                    newStanceEffects = stanceInst.appliedEffects;
+                    // ADICIONE ESTA LINHA:
+                    AddStartupRuleEffects(player, stanceInst.startupRules, newStanceEffects, "Stance");
                 }
             }
+
         }
 
         // 4. Aplica/Remove efeitos da Stance
@@ -1177,9 +1181,8 @@ void GlobalControl::MovesetSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                 if (originalStanceIndex > 0 && originalStanceIndex <= category.instances.size()) {
                     const auto& stanceInstance = category.instances[originalStanceIndex - 1];
                     // Efeitos da Stance (sempre incluídos)
-                    firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                       stanceInstance.appliedEffects.begin(),
-                                                       stanceInstance.appliedEffects.end());
+
+                    AddStartupRuleEffects(player, stanceInstance.startupRules, firstMovesetCombinedEffects, "Stance");
 
                     // Encontra o ModInstance e SubAnimationInstance correspondentes ao PRIMEIRO moveset
                     // (originalMovesetIndexToApply)
@@ -1207,14 +1210,10 @@ void GlobalControl::MovesetSink::ProcessEvent(SkyPromptAPI::PromptEvent event) c
                         }
                     found_first_moveset_decline_sink:;
                         if (firstModInst) {
-                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                               firstModInst->appliedEffects.begin(),
-                                                               firstModInst->appliedEffects.end());
+                            AddStartupRuleEffects(player, firstModInst->startupRules, firstMovesetCombinedEffects, "Moveset");
                         }
                         if (firstSubInst) {
-                            firstMovesetCombinedEffects.insert(firstMovesetCombinedEffects.end(),
-                                                               firstSubInst->appliedEffects.begin(),
-                                                               firstSubInst->appliedEffects.end());
+                            AddStartupRuleEffects(player, firstSubInst->startupRules, firstMovesetCombinedEffects, "SubMoveset");
                         }
                     }
                 }
@@ -1351,9 +1350,7 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
             if (stanceOriginalIndex > 0 && stanceOriginalIndex <= category.instances.size()) {
                 const auto& stanceInstance = category.instances[stanceOriginalIndex - 1];
                 // Efeitos da Stance (sempre incluídos)
-                combinedEffects.insert(combinedEffects.end(), stanceInstance.appliedEffects.begin(),
-                                       stanceInstance.appliedEffects.end());
-
+                AddStartupRuleEffects(player, stanceInstance.startupRules, combinedEffects, "Stance");
                 // Encontra o ModInstance e SubAnimationInstance correspondentes ao NOVO originalMovesetIndexToApply
                 if (originalMovesetIndexToApply > 0) {  // Só busca se houver um moveset para aplicar
                     int parentCounter = 0;
@@ -1379,12 +1376,10 @@ void GlobalControl::MovesetChangesSink::ProcessEvent(SkyPromptAPI::PromptEvent e
                     }
                 found_instances_moveset_apply:;  // Fim da busca
                     if (currentModInst) {
-                        combinedEffects.insert(combinedEffects.end(), currentModInst->appliedEffects.begin(),
-                                               currentModInst->appliedEffects.end());
+                        AddStartupRuleEffects(player, currentModInst->startupRules, combinedEffects, "Moveset");
                     }
                     if (currentSubInst) {
-                        combinedEffects.insert(combinedEffects.end(), currentSubInst->appliedEffects.begin(),
-                                               currentSubInst->appliedEffects.end());
+                        AddStartupRuleEffects(player, currentSubInst->startupRules, combinedEffects, "SubMoveset");
                     }
                 }  // Fim if (originalMovesetIndexToApply > 0)
             }  // Fim if (stanceOriginalIndex > 0 ...)
@@ -1778,12 +1773,17 @@ found_parent_instances_directional:;
 
     // 4. Coletar Efeitos Combinados
     std::vector<AppliedEffect> combinedEffects;
-    combinedEffects.insert(combinedEffects.end(), stanceInstance.appliedEffects.begin(),
-                           stanceInstance.appliedEffects.end());
-    combinedEffects.insert(combinedEffects.end(), parentModInst->appliedEffects.begin(),
-                           parentModInst->appliedEffects.end());
-    combinedEffects.insert(combinedEffects.end(), effectiveSubInst->appliedEffects.begin(),
-                           effectiveSubInst->appliedEffects.end());
+    // Stance
+    
+    AddStartupRuleEffects(player, stanceInstance.startupRules, combinedEffects, "Stance");
+
+    // Moveset Pai
+
+    AddStartupRuleEffects(player, parentModInst->startupRules, combinedEffects, "Moveset");
+
+    // Sub-moveset Efetivo (Pai ou Filho)
+
+    AddStartupRuleEffects(player, effectiveSubInst->startupRules, combinedEffects, "SubMoveset");
 
     // 5. Remover Duplicatas
     std::sort(combinedEffects.begin(), combinedEffects.end());
@@ -3047,7 +3047,7 @@ void AnimationManager::OnHit(RE::Actor* actor, int hitCount, AttackTrigger trigg
     if (hitCount > 0) {
         for (const auto& rule : periodicRules) {
             if (rule.hitCount > 0 && (hitCount % rule.hitCount == 0)) {
-                if (GlobalControl::CheckActorHasPerks(actor, rule.perks) && !GlobalControl::CheckActorHasAnyPerk(actor, rule.perks)) {
+                if (GlobalControl::CheckActorHasPerks(actor, rule.perks) && !GlobalControl::CheckActorHasAnyPerk(actor, rule.disabledPerks)) {
                     if (rule.effects.empty()) {
                         continue;
                     }

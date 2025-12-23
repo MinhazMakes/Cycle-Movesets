@@ -107,6 +107,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Hooks::g_isActivelyDualWieldingKeyword = dataHandler->LookupForm<RE::BGSKeyword>(0x801, "CMF.esp");
         AnimationManager::GetSingleton()->ScanAnimationMods();
         UI::RegisterMenu();
+		gameisloaded = true;
     }
     
 

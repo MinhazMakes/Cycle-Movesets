@@ -30,7 +30,6 @@ public:
     std::string GetCurrentMovesetName(RE::Actor* actor, const std::string& categoryName, int stanceIndex,
                                       int movesetIndex, int directionalState);
     bool _showRestartPopup = false;
-    bool gameisloaded = false;
     void ScanDarAnimations();
     void LoadGameDataForNpcRules();
     void PopulateNpcList();
@@ -386,7 +385,10 @@ private:
     void AddIsEquipSlotOccupiedCondition(rapidjson::Value& conditionsArray, const std::string& slotName, bool negated,
                                          rapidjson::Document::AllocatorType& allocator);
 
+
+
     void DrawConditionsEffectsPopup();
+    void DrawStartupRuleNamePopup();
     void DrawHitCountNumberPopup();
 
     void AddIsRefFormIDCondition(rapidjson::Value& conditionsArray, const std::string& refFormID, bool negated,

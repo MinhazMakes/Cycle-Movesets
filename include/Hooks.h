@@ -48,7 +48,7 @@ namespace Settings {
     inline bool EnableAllNPC = true;
     inline bool MGKRequeriment = true;
     inline bool AllowPartialCast = true;
-
+    inline bool DisableCache = false;
 }
 
 // Namespace para a nossa UI

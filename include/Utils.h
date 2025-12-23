@@ -16,6 +16,8 @@ namespace GlobalControl {
     //constexpr std::string_view GLOBAL_EDITOR_ID = "NovoJeito";
     bool CheckActorHasPerks(RE::Actor* actor, const std::vector<PerkDef>& perks);
     bool CheckActorHasAnyPerk(RE::Actor* actor, const std::vector<PerkDef>& perks);
+    void ApplySingleStartupRule(RE::Actor* actor, const StartupRule& rule, std::vector<AppliedEffect>& targetList, const std::string& origin);
+    void AddStartupRuleEffects(RE::Actor* actor, const std::vector<StartupRule>& rules, std::vector<AppliedEffect>& targetList, const std::string& origin);
     // Ponteiro para a variável global, será preenchido quando o jogo carregar
     //inline RE::TESGlobal* g_targetGlobal = nullptr;
     struct MovesetCandidate {
