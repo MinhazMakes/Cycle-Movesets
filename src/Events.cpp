@@ -147,7 +147,7 @@ namespace MyMenu {
                 ImGui::TextDisabled("(?)");
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
-                        "If enabled, spells/effects trigger even with insufficient Magicka/Stamina.\n"
+                        "If enabled, spells/effects trigger even with insufficient Health/Magicka/Stamina.\n"
                         "However, the magnitude/duration will be reduced proportionally\n"
                         "to the missing resource amount.");
                 }
@@ -158,7 +158,7 @@ namespace MyMenu {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(?)");
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Forces the mod to perform a full scan of the animation folders every time it loads, ignoring the CMF_Cache.json file.");
+                    ImGui::SetTooltip("Forces the mod to perform to ignoring cache, so it saves when you save.");
                 }
                 if (settings_changed) {
                     MyMenu::SaveSettings();

@@ -97,7 +97,11 @@ private:
     std::vector<AppliedEffect> _lastAppliedHitEffects;
     std::vector<AppliedEffect> _lastAppliedSwingEffects;
     bool _isCreatingPeriodicHitRule = false;
-    
+
+    StartupRule* _startupRuleToEdit = nullptr;
+    std::vector<StartupRule>* _startupRuleListOwner = nullptr;
+    bool _isStartupRuleNamePopupOpen = false;
+    char _startupRuleNameBuffer[128] = "";
     
     std::map<std::string, WeaponCategory> _categories;
     std::map<std::string, WeaponCategory> _npcCategories;
@@ -391,6 +395,7 @@ private:
     void DrawStartupRuleNamePopup();
     void DrawHitCountNumberPopup();
 
+   
     void AddIsRefFormIDCondition(rapidjson::Value& conditionsArray, const std::string& refFormID, bool negated,
                                  rapidjson::Document::AllocatorType& allocator);
 

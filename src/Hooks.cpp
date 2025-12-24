@@ -4790,12 +4790,12 @@ void AnimationManager::SaveStances() {
             doc.AddMember("name", rapidjson::Value(stanceName.c_str(), allocator), allocator);
             doc.AddMember("index", i, allocator);
 
-            // Salva os perks de requisito (usando a função 2HHandle que salva [plugin, formID])
-            CreatePerkListJsonFor2H(doc, doc, "perksToUse", instance.perkList);
-            CreatePerkListJsonFor2H(doc, doc, "disabledPerksToUse", instance.disabledPerks);
-            // Salva os efeitos aplicados (usando a função que salva [type, plugin, formID, origin])
-            // O "origin" será salvo como "" (vazio), o que é bom.
-            CreateEffectListJson(doc, doc, "effectsToApply", instance.appliedEffects);
+            //// Salva os perks de requisito (usando a função 2HHandle que salva [plugin, formID])
+            //CreatePerkListJsonFor2H(doc, doc, "perksToUse", instance.perkList);
+            //CreatePerkListJsonFor2H(doc, doc, "disabledPerksToUse", instance.disabledPerks);
+            //// Salva os efeitos aplicados (usando a função que salva [type, plugin, formID, origin])
+            //// O "origin" será salvo como "" (vazio), o que é bom.
+            //CreateEffectListJson(doc, doc, "effectsToApply", instance.appliedEffects);
 
             std::ofstream ofs(stanceFilePath);
             if (!ofs) {
@@ -4902,8 +4902,8 @@ void AnimationManager::LoadStances() {
                         auto& allocator = newDoc.GetAllocator();
                         newDoc.AddMember("name", rapidjson::Value(stanceName.c_str(), allocator), allocator);
                         newDoc.AddMember("index", static_cast<int>(i), allocator);
-                        newDoc.AddMember("perksToUse", rapidjson::kArrayType, allocator);
-                        newDoc.AddMember("effectsToApply", rapidjson::kArrayType, allocator);
+                        //newDoc.AddMember("perksToUse", rapidjson::kArrayType, allocator);
+                        //newDoc.AddMember("effectsToApply", rapidjson::kArrayType, allocator);
 
                         std::ofstream ofs(newStancePath);
                         if (ofs) {
@@ -7263,7 +7263,9 @@ void AnimationManager::LoadAnimationLibrary() {
 
     // Se o cache não for válido ou não existir, executa o escaneamento completo.
     _cacheWasInvalid = true;
+    if (!Settings::DisableCache){
     SaveAllSettings();
+    }
     PerformFullScanAndSaveCache();
 }
 
