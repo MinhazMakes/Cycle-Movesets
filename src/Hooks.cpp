@@ -4712,17 +4712,13 @@ std::string AnimationManager::GetCurrentMovesetName(RE::Actor* actor, const std:
                     (directionalState == 7 && subInst.pLeft) || (directionalState == 8 && subInst.pFrontLeft);
 
                 if (isDirectionalMatch) {
-                    if (GlobalControl::CheckActorHasPerks(actor, subInst.perkList)) {
+                    if (GlobalControl::CheckActorHasPerks(actor, subInst.perkList) && !GlobalControl::CheckActorHasAnyPerk(actor, subInst.disabledPerks)) {
                         // Se o jogador tem o perk, retorna o nome do filho
                         const auto& sourceSubAnimChild =
                             _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
                         return (subInst.editedName[0] != '\0') ? subInst.editedName.data()
                             : sourceSubAnimChild.name;
                     }
-                    // Encontramos o filho direcional que corresponde ao nosso pai! Este é o resultado final.
-                    const auto& sourceSubAnimChild =
-                        _allMods[subInst.sourceModIndex].subAnimations[subInst.sourceSubAnimIndex];
-                    return (subInst.editedName[0] != '\0') ? subInst.editedName.data() : sourceSubAnimChild.name;
                 }
             }
         }

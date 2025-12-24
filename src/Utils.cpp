@@ -250,7 +250,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         return;
     }
     // 3. Verificar Perks
-    logger::info("  - Verificando Perks...");
+    /*logger::info("  - Verificando Perks...");*/
     bool hasBase2HPerks = GlobalControl::CheckActorHasPerks(npc, handle::npc2HConfig.requiredPerks)&&
         !GlobalControl::CheckActorHasAnyPerk(npc, handle::npc2HConfig.disabledPerks);
     bool hasDual2HPerks = GlobalControl::CheckActorHasPerks(npc, handle::npc2HConfig.requiredPerksDual2H) &&
@@ -270,10 +270,10 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         return;
     }
 
-    logger::info("  - Status Perks: Base 2H Handle: {}. Dual 2H: {}.", hasBase2HPerks, hasDual2HPerks);
+    /*logger::info("  - Status Perks: Base 2H Handle: {}. Dual 2H: {}.", hasBase2HPerks, hasDual2HPerks);*/
 
     // 4. Escanear inventário para itens NÃO EQUIPADOS
-    logger::info("  - Escaneando inventário...");
+    /*logger::info("  - Escaneando inventário...");*/
     std::vector<RE::TESObjectWEAP*> twoHandedWeapons;
     std::vector<RE::TESObjectWEAP*> oneHandedWeapons;
     std::vector<RE::TESObjectARMO*> shields;
@@ -317,7 +317,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
            // logger::info("  -> Equipando '{}' na Mão Esquerda (Fallback Escudo).", shields[0]->GetName());
             EquipItemWithGripChange(actor, shields[0], Hooks::g_leftHandSlot);
         } else {
-            logger::info("  -> Nenhuma opção de fallback para a Mão Esquerda. Deixando vazia.");
+            /*logger::info("  -> Nenhuma opção de fallback para a Mão Esquerda. Deixando vazia.");*/
         }
     };
 
@@ -332,7 +332,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
                 EquipItemWithGripChange(npc, twoHandedWeapons[0], Hooks::g_leftHandSlot);
             } else {
                 // Fallback para Dual 2H (não há outra 2H)
-                logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
+                // logger::info("  - Ação: Perks 'Dual 2H' presentes, mas sem segunda arma 2H. Usando fallback...");
                 equipLeftHandFallback(npc);
             }
         } else {
@@ -342,7 +342,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         }
     } else {
         // Caso B: NPC NÃO tem uma 2H na mão direita, mas deveria.
-        logger::info("  - Ação: NPC não tem 2H na mão direita. Tentando equipar...");
+        // logger::info("  - Ação: NPC não tem 2H na mão direita. Tentando equipar...");
 
         // Encontra a primeira 2H disponível no inventário
         RE::TESObjectWEAP* rightWeaponToEquip = nullptr;
@@ -361,7 +361,7 @@ void CheckAndEquipDualTwoHandedForNPC(RE::Actor* npc) {
         }
 
         // Equipa a arma 2H na mão direita
-        logger::info("  -> Equipando '{}' na Mão Direita.", rightWeaponToEquip->GetName());
+        // logger::info("  -> Equipando '{}' na Mão Direita.", rightWeaponToEquip->GetName());
         EquipItemWithGripChange(npc, rightWeaponToEquip, Hooks::g_rightHandSlot);
 
         // Agora, gerencia a mão esquerda com base nos perks
@@ -2696,7 +2696,7 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                 weapon->SetEquipSlot(originalSlot);
             }
             if (a_actor) {
-                logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
+                // logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
 
                 // Função helper para checar e logar um slot
                 auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
@@ -2708,10 +2708,10 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                     RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
                     if (equippedItem) {
                         // Se o item existir, loga o nome dele
-                        logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
+                        // logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
                     } else {
                         // Se estiver vazio, loga "Vazio"
-                        logger::info("Slot [{}]: Vazio", slotName);
+                        // logger::info("Slot [{}]: Vazio", slotName);
                     }
                 };
                 
@@ -2720,7 +2720,7 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
                 logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
                 logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
 
-                logger::info("-------------------------------------------------");
+                // logger::info("-------------------------------------------------");
             }
             return;
         }
@@ -2834,7 +2834,7 @@ RE::BSEventNotifyControl GlobalControl::HitEventHandler::ProcessEvent(
             GlobalControl::g_gotHitComboState.comboTimeoutTimestamp = std::chrono::steady_clock::now() + timeout_ms;
             // ------------------------------------------
 
-            logger::info("Player foi atingido. Contador atualizado para: {}", GlobalControl::g_playerHitted);
+            // logger::info("Player foi atingido. Contador atualizado para: {}", GlobalControl::g_playerHitted);
 
             AnimationManager::GetSingleton()->OnHit(player, GlobalControl::g_playerHitted, AttackTrigger::GotHit);
         }
