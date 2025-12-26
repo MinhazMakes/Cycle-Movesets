@@ -267,6 +267,7 @@ namespace Hooks {
     inline RE::BGSEquipSlot* g_leftHandSlot = nullptr;
     inline RE::BGSEquipSlot* g_rightHandSlot = nullptr;
     inline RE::BGSEquipSlot* g_twoHandSlot = nullptr;
+    inline RE::BGSEquipSlot* g_shield = nullptr;
     inline RE::BGSEquipSlot* g_cmfhandle = nullptr;
     inline RE::BGSKeyword* g_weapTypeSword = nullptr;
     inline RE::BGSKeyword* g_weapTypeGreatsword = nullptr;

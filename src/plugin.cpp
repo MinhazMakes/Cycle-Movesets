@@ -96,6 +96,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         Hooks::g_rightHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f42, "Skyrim.esm");
         Hooks::g_leftHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f43, "Skyrim.esm");
         Hooks::g_twoHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f45, "Skyrim.esm");
+        Hooks::g_shield = dataHandler->LookupForm<RE::BGSEquipSlot>(0x141E8, "Skyrim.esm");
         Hooks::g_cmfhandle = dataHandler->LookupForm<RE::BGSEquipSlot>(0x802, "CMF.esp");
         
         Hooks::g_weapTypeSword = dataHandler->LookupForm<RE::BGSKeyword>(0x1E711, "Skyrim.esm");

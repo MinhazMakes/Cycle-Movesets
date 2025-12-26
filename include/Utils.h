@@ -369,6 +369,7 @@ namespace GlobalControl {
     void UpdatePowerAttackGlobals();
     bool ShouldShowPrompts();
     void UpdatePromptVisibility();
+	inline bool want2hequip = false;
     struct Equip2H {
         static void thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* extraData, int count,
                           std::int64_t* equipSlot, char queueEquip, char forceEquip, char playSounds, char applyNow);

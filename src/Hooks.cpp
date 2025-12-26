@@ -7116,7 +7116,8 @@ std::map<std::string, int64_t> AnimationManager::GetCurrentAnimationState() {
 
                     bool isValidModFolder = hasHkx && (std::filesystem::exists(dirPath / "_conditions.txt") ||
                         std::filesystem::exists(dirPath / "config.json") ||
-                        std::filesystem::exists(dirPath / "user.json"));
+                        std::filesystem::exists(dirPath / "user.json") ||
+                        std::filesystem::exists(dirPath / "CycleDar.json"));
 
                     if (isValidModFolder) {
                         auto modTimeOpt = GetFileTime(dirPath);
@@ -7309,13 +7310,26 @@ bool AnimationManager::ValidateCache(const std::filesystem::path& cachePath) {
     // 2. Verificação de Conteúdo e Timestamps
     for (const auto& [path, timestamp] : currentState) {
         auto it = manifestMap.find(path);
-        if (it == manifestMap.end()) {
-            SKSE::log::info("Cache inválido: Nova pasta de animação detectada em '{}'.", path);
-            return false;  // Pasta nova encontrada que não estava no manifesto.
-        }
-        if (it->second != timestamp) {
+        if (it == manifestMap.end() || it->second != timestamp) {
             SKSE::log::info("Cache inválido: Modificação detectada em '{}'.", path);
-            return false;  // Timestamp da pasta mudou.
+            return false;
+        }
+
+        // --- NOVA LÓGICA DE VALIDAÇÃO PROFUNDA DO CYCLEDAR ---
+        std::filesystem::path cycleDarPath = PathFromUTF8(path) / "CycleDar.json";
+        if (std::filesystem::exists(cycleDarPath)) {
+            std::ifstream ifs(cycleDarPath);
+            std::string content((std::istreambuf_iterator<char>(ifs)), {});
+            rapidjson::Document doc;
+            doc.Parse(content.c_str());
+
+            // Se o arquivo existe mas a conversão NÃO está marcada como pronta, invalida o cache
+            if (!doc.HasParseError() && doc.HasMember("conversionDone") && doc["conversionDone"].IsBool()) {
+                if (doc["conversionDone"].GetBool() == false) {
+                    SKSE::log::info("Cache invalidado: Conversão pendente detectada em '{}'.", path);
+                    return false;
+                }
+            }
         }
     }
 

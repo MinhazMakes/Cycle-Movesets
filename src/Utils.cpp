@@ -203,10 +203,11 @@ void EquipItemWithGripChange(RE::Actor* actor, RE::TESBoundObject* item, RE::BGS
 
     // CASO C: Destino é SLOT DE DUAS MÃOS (Retornar ao normal)
     else if (targetSlot == Hooks::g_twoHandSlot) {
+        GlobalControl::want2hequip = true;
             equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_rightHandSlot, true, true, false);
             equipManager->UnequipObject(actor, nullptr, nullptr, 1, Hooks::g_leftHandSlot, true, true, false);
     }
-
+	
     equipManager->EquipObject(actor, item, nullptr, 1, targetSlot);
     RE::SendUIMessage::SendInventoryUpdateMessage(actor, nullptr);
 }
@@ -590,9 +591,6 @@ void GlobalControl::InputListener::UpdateDirectionalState() {
     }*/
 }
 
-// NOVA FUNÇÃO AUXILIAR PARA QUALQUER ATOR
-// EM Utils.cpp
-
 std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     if (!targetActor) return "Unarmed";
 
@@ -600,36 +598,30 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     auto itemR = targetActor->GetEquippedObjectInSlot(Hooks::g_rightHandSlot);
     auto itemL = targetActor->GetEquippedObjectInSlot(Hooks::g_leftHandSlot);
     auto item2H = targetActor->GetEquippedObjectInSlot(Hooks::g_twoHandSlot);
+    auto itemShield = targetActor->GetEquippedObjectInSlot(Hooks::g_shield);
 
     RE::TESObjectWEAP* rightWeapon = nullptr;
     RE::TESObjectWEAP* leftWeapon = nullptr;
-    RE::TESObjectARMO* leftArmor = nullptr;  // Para escudos
-
+    RE::TESObjectARMO* leftArmor = nullptr;
     bool isUsingTwoHandedSlot = false;
 
-    // 2. Lógica de prioridade para determinar o que está equipado
+
     if (item2H && item2H->IsWeapon()) {
-        // Caso 1: Arma de Duas Mãos Padrão (ocupa o slot 2H)
         rightWeapon = item2H->As<RE::TESObjectWEAP>();
-        leftWeapon = nullptr;  // Slot 2H ocupa ambas as mãos
-        isUsingTwoHandedSlot = true; // Marca que está usando o slot nativo de 2 mãos
+        isUsingTwoHandedSlot = true;
     }
-    else {
-        // Caso 2: Dual Wield (1H ou 2H), 1H + Escudo, ou 1H + Vazio
-        if (itemR && itemR->IsWeapon()) {
-            rightWeapon = itemR->As<RE::TESObjectWEAP>();
-        }
-        if (itemL) {  // Slot da mão esquerda está ocupado
-            if (itemL->IsWeapon()) {
-                leftWeapon = itemL->As<RE::TESObjectWEAP>();
-            }
-            else if (itemL->IsArmor()) {
-                leftArmor = itemL->As<RE::TESObjectARMO>();
-            }
-        }
+    else if (itemR && itemR->IsWeapon()) {
+        rightWeapon = itemR->As<RE::TESObjectWEAP>();
     }
 
-    // 3. Lógica de checagem de estado
+    if (itemL && itemL->IsWeapon()) {
+        leftWeapon = itemL->As<RE::TESObjectWEAP>();
+    }
+    else if (itemShield != nullptr) {
+        leftArmor = itemShield->As<RE::TESObjectARMO>();
+    }
+
+
     if (!rightWeapon && !leftWeapon && (!leftArmor || !leftArmor->IsShield())) {
         return "Unarmed";
     }
@@ -637,60 +629,36 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
     auto getAdjustedWeaponType = [](RE::TESObjectWEAP* weap) -> double {
         if (!weap) return 0.0;
         double type = static_cast<double>(weap->GetWeaponType());
-
-        // Se for TwoHandAxe (6) mas tiver a keyword de Warhammer,
-        // retornamos 10.0 para casar com sua configuração.
-        if (type == 6.0 && weap->HasKeywordString("WeapTypeWarhammer")) {
-            return 10.0;
-        }
+        if (type == 6.0 && weap->HasKeywordString("WeapTypeWarhammer")) return 10.0;
         return type;
         };
 
-    // 4. Determinar os tipos
+    // 3. Determinar os tipos numéricos
     double rightHandType = getAdjustedWeaponType(rightWeapon);
-
     double leftHandType = 0.0;
 
-    // --- LÓGICA ALTERADA AQUI ---
-    if (isUsingTwoHandedSlot) {
-        // Se a arma está no slot de duas mãos, forçamos -1.0.
-        // Isso vai casar com suas categorias: "Greatsword", 5.0, -1.0
-        // E NÃO vai casar (ou terá score menor) com: "Greatsword (1H)", 5.0, 0.0
-        leftHandType = -1.0;
-    }
-    else if (leftWeapon) {
+    if (leftWeapon) {
         leftHandType = getAdjustedWeaponType(leftWeapon);
     }
-    else if (leftArmor && leftArmor->IsShield()) {
-        leftHandType = 11.0;  // Tipo para escudo
+    else if (leftArmor) {
+        leftHandType = 11.0; // Identifica como Shield
     }
-    // Se não entrou nos ifs acima, leftHandType continua 0.0 (Mão Esquerda Vazia / Grip 1H)
-
-    // ==============================================================================
-    // A lógica de correspondência e pontuação agora funciona universalmente
-    // ==============================================================================
+    else if (isUsingTwoHandedSlot) {
+        leftHandType = -1.0; // Mão ocupada pela arma 2H (sem escudo)
+    }
 
     const auto& allCategories = AnimationManager::GetSingleton()->GetCategories();
     std::vector<MatchResult> matches;
-    std::string fallbackCategory = "Sem Categoria";
 
     for (const auto& pair : allCategories) {
         const WeaponCategory& category = pair.second;
 
-
-        // A. Checagem de Tipo
+        // Checagem de Tipo
         bool rightHandTypeMatch = (category.equippedTypeValue == rightHandType);
-
-
-        // Se leftHandType for -1.0 (True 2H), ele casa com categorias que pedem < 0.0 ou == -1.0
-        // Se leftHandType for 0.0 (1H Grip), ele casa com categorias que pedem == 0.0
-        bool leftHandTypeMatch =
-            (category.leftHandEquippedTypeValue < 0.0 || category.leftHandEquippedTypeValue == leftHandType);
-
-        // ATENÇÃO: Para evitar falsos positivos do -1 (wildcard), refinamos a lógica no Score abaixo.
+        bool leftHandTypeMatch = (category.leftHandEquippedTypeValue < 0.0 || category.leftHandEquippedTypeValue == leftHandType);
 
         if (rightHandTypeMatch && leftHandTypeMatch) {
-            // B. Checagem de Keywords
+            // Checagem de Keywords
             bool rightKeywordsMatch = category.keywords.empty();
             if (!rightKeywordsMatch && rightWeapon) {
                 for (const auto& keyword : category.keywords) {
@@ -711,18 +679,11 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
                 }
             }
 
-            // C. Se tudo corresponde, calcula o score
             if (rightKeywordsMatch && leftKeywordsMatch) {
                 int score = 0;
                 if (!category.keywords.empty()) score += 4;
                 if (!category.leftHandKeywords.empty()) score += 4;
-
-                // Tipos específicos
                 if (category.equippedTypeValue > 0.0) score += 2;
-
-                // CRUCIAL: Se a categoria pede um tipo exato de mão esquerda (>= 0), damos mais pontos.
-                // Isso faz com que "Greatsword (1H)" (Left: 0.0) ganhe de "Greatsword" (Left: -1.0)
-                // quando o leftHandType real for 0.0.
                 if (category.leftHandEquippedTypeValue >= 0.0) score += 1;
 
                 matches.push_back({ &category, score });
@@ -730,13 +691,12 @@ std::string GetActorWeaponCategoryName(RE::Actor* targetActor) {
         }
     }
 
-    if (matches.empty()) {
-        return fallbackCategory;
-    }
+    if (matches.empty()) return "Sem Categoria";
 
     auto bestMatch = std::max_element(matches.begin(), matches.end(),
         [](const MatchResult& a, const MatchResult& b) { return a.score < b.score; });
 
+    logger::info("[CategoryScan] Resultado Final: '{}' (Score: {})", bestMatch->category->name, bestMatch->score);
     return bestMatch->category->name;
 }
 
@@ -2599,10 +2559,10 @@ void GlobalControl::EquipMenu::ProcessEvent(SkyPromptAPI::PromptEvent event) con
     }
 
     switch (event.prompt.eventID) {
-        case 0:  // Equipar na mão ESQUERDA
-            //logger::info("Equipando {} na mão esquerda.", itemToEquip->GetName());
+        case 0:
             EquipItemWithGripChange(player, itemToEquip, Hooks::g_twoHandSlot);
             break;
+            
     }
 }
 
@@ -2688,40 +2648,41 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
         }
         // Força o jogo a pensar que é um item de mão direita
         if (canUse2HHandle && isTwoHanded(weapon)) {
-            weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+            if (!want2hequip) {
+                weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+            }
             func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
             // 3. RESTAURAR (DEPOIS de chamar func)
-            if (weapon && originalSlot) {
+            if (weapon && originalSlot && !want2hequip) {
                 // Restaura o slot original para o estado normal (2H)
                 weapon->SetEquipSlot(originalSlot);
             }
-            if (a_actor) {
-                // logger::info("--- Verificando Ocupação dos Slots Pós-Equip ---");
+            want2hequip = false;
+            //if (a_actor) {
 
-                // Função helper para checar e logar um slot
-                auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
-                    if (!slot) {
-                        logger::warn("Tentando logar um slot nulo: {}", slotName);
-                        return;
-                    }
+            //    auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
+            //        if (!slot) {
+            //            logger::warn("Tentando logar um slot nulo: {}", slotName);
+            //            return;
+            //        }
 
-                    RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
-                    if (equippedItem) {
-                        // Se o item existir, loga o nome dele
-                        // logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
-                    } else {
-                        // Se estiver vazio, loga "Vazio"
-                        // logger::info("Slot [{}]: Vazio", slotName);
-                    }
-                };
-                
-                
-                logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
-                logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
-                logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
+            //        RE::TESForm* equippedItem = a_actor->GetEquippedObjectInSlot(slot);
+            //        if (equippedItem) {
+            //            // Se o item existir, loga o nome dele
+            //            // logger::info("Slot [{}]: {}", slotName, equippedItem->GetName());
+            //        } else {
+            //            // Se estiver vazio, loga "Vazio"
+            //            // logger::info("Slot [{}]: Vazio", slotName);
+            //        }
+            //    };
+            //    
+            //    
+            //    logSlotStatus(Hooks::g_rightHandSlot, "g_rightHandSlot");
+            //    logSlotStatus(Hooks::g_leftHandSlot, "g_leftHandSlot");
+            //    logSlotStatus(Hooks::g_twoHandSlot, "g_twoHandSlot");
 
-                // logger::info("-------------------------------------------------");
-            }
+            //    // logger::info("-------------------------------------------------");
+            //}
             return;
         }
     }
