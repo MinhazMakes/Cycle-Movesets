@@ -2646,18 +2646,16 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
         } else {
             SKSE::log::warn("Equip2H: Não foi possível determinar a configuração 2H Handle a ser verificada.");
         }
-        // Força o jogo a pensar que é um item de mão direita
-        if (canUse2HHandle && isTwoHanded(weapon)) {
-            if (!want2hequip) {
-                weapon->SetEquipSlot(Hooks::g_rightHandSlot);
-            }
-            func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, true, playSounds, true);
+    
+        if (!want2hequip && canUse2HHandle && isTwoHanded(weapon)) {
+            weapon->SetEquipSlot(Hooks::g_rightHandSlot);
+            func(a, a_actor, a_form, extraData, count, equipSlot, false, true, playSounds, true);
             // 3. RESTAURAR (DEPOIS de chamar func)
-            if (weapon && originalSlot && !want2hequip) {
+            if (weapon && originalSlot) {
                 // Restaura o slot original para o estado normal (2H)
                 weapon->SetEquipSlot(originalSlot);
             }
-            want2hequip = false;
+
             //if (a_actor) {
 
             //    auto logSlotStatus = [a_actor](RE::BGSEquipSlot* slot, const char* slotName) {
@@ -2685,6 +2683,7 @@ void GlobalControl::Equip2H::thunk(std::int64_t* a, RE::Actor* a_actor, RE::TESF
             //}
             return;
         }
+        want2hequip = false;
     }
 
     return func(a, a_actor, a_form, extraData, count, equipSlot, queueEquip, forceEquip, playSounds, applyNow);
